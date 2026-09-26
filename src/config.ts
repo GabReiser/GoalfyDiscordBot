@@ -41,13 +41,24 @@ const goalfySchema = z.object({
   GOALFY_DONE_PHASES: csv,
 });
 
+/** IDs do Discord ("snowflakes") são só dígitos; pega o erro comum de colar o token no lugar do ID. */
+const SNOWFLAKE = /^\d{17,21}$/;
+const snowflake = (name: string, where: string) =>
+  z.string().trim().regex(SNOWFLAKE, `${name} deve ser um ID numérico (${where}). Não cole o token aqui.`);
+const snowflakes = (name: string) =>
+  csv.refine((ids) => ids.every((id) => SNOWFLAKE.test(id)), `${name} deve conter IDs numéricos separados por vírgula`);
+
 const botSchema = goalfySchema.extend({
-  DISCORD_TOKEN: z.string().min(1, 'DISCORD_TOKEN é obrigatório'),
-  DISCORD_CLIENT_ID: z.string().min(1, 'DISCORD_CLIENT_ID é obrigatório'),
-  DISCORD_GUILD_ID: z.string().min(1, 'DISCORD_GUILD_ID é obrigatório'),
-  DISCORD_FORUM_CHANNEL_IDS: csv,
-  DISCORD_TRIAGE_ROLE_IDS: csv,
-  DISCORD_TRIAGE_CHANNEL_ID: optional,
+  DISCORD_TOKEN: z
+    .string()
+    .trim()
+    .min(1, 'DISCORD_TOKEN é obrigatório')
+    .refine((t) => t.split('.').length === 3, 'DISCORD_TOKEN parece inválido: o token do bot tem 3 partes separadas por ponto (Bot → Reset Token)'),
+  DISCORD_CLIENT_ID: snowflake('DISCORD_CLIENT_ID', 'General Information → Application ID'),
+  DISCORD_GUILD_ID: snowflake('DISCORD_GUILD_ID', 'clique direito no servidor → Copiar ID'),
+  DISCORD_FORUM_CHANNEL_IDS: snowflakes('DISCORD_FORUM_CHANNEL_IDS'),
+  DISCORD_TRIAGE_ROLE_IDS: snowflakes('DISCORD_TRIAGE_ROLE_IDS'),
+  DISCORD_TRIAGE_CHANNEL_ID: optional.refine((v) => v === undefined || SNOWFLAKE.test(v), 'DISCORD_TRIAGE_CHANNEL_ID deve ser um ID numérico'),
   STALE_TOPIC_HOURS: z.coerce.number().min(0).default(24),
   GOALFY_BOARD_ID: z.string().min(1, 'GOALFY_BOARD_ID é obrigatório'),
   SYNC_INTERVAL_SECONDS: z.coerce.number().int().min(30).default(120),

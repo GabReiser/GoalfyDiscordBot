@@ -1,0 +1,37 @@
+# Produção:
+#   docker compose up -d --build                      → só o bot (polling)
+#   docker compose --profile webhook up -d --build    → bot + Caddy (HTTPS para o webhook da Goalfy)
+#
+# O Compose lê o .env desta pasta tanto para o container (env_file) quanto para
+# interpolar ${WEBHOOK_DOMAIN} abaixo.
+
+services:
+  bot:
+    build: .
+    image: goalfy-discord-bot
+    container_name: goalfy-bot
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - bot-data:/app/data # SQLite: vínculos tópico↔card, status e métricas
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  caddy:
+    image: caddy:2
+    profiles: [webhook]
+    container_name: goalfy-bot-caddy
+    restart: unless-stopped
+    depends_on: [bot]
+    ports: ["80:80", "443:443"]
+    # Certificado HTTPS automático (Let's Encrypt) para o domínio do webhook.
+    # WEBHOOK_DOMAIN vem do .env (ex.: bot.suaempresa.com.br). Não use ":?" aqui: o Compose
+    # interpola o arquivo inteiro e quebraria o "up" mesmo sem o perfil webhook.
+    command: caddy reverse-proxy --from ${WEBHOOK_DOMAIN:-} --to bot:3000
+    volumes:
+      - caddy-data:/data
+
+volumes:
+  bot-data:
+  caddy-data:
