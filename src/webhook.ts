@@ -93,7 +93,10 @@ export async function startWebhookServer(ctx: BotContext): Promise<Server | unde
       }
       const cardId = payload.id !== undefined ? String(payload.id) : undefined;
       if (!cardId || String(payload.boardId ?? '') !== ctx.board.boardId) return;
-      if (!ctx.store.byCard(cardId)) return; // card sem tópico vinculado
+      if (!ctx.store.byCard(cardId)) {
+        logger.debug(`Webhook recebido: card ${cardId} → "${String(payload.currentPhase ?? '?')}" (sem tópico vinculado, ignorado)`);
+        return;
+      }
       logger.debug(`Webhook: card ${cardId} mudou para "${String(payload.currentPhase ?? '?')}"`);
       syncCard(ctx, cardId, { comments: false }).catch((e) => logger.warn(`Falha ao processar webhook do card ${cardId}`, e));
     });

@@ -492,6 +492,23 @@ docker compose logs -f bot
   responde `ok` para health checks. Sem webhook, o bot funciona só com polling.
 - Não é preciso abrir porta para o Discord: a conexão com o Gateway sai do bot.
 
+### VPS que já tem um ingress (ex.: k3s com Traefik nas portas 80/443)
+
+Não suba o perfil `webhook` (Caddy): ele disputaria as portas 80/443 com o ingress. Em vez disso:
+
+1. Publique a porta do bot **só na bridge do Docker**, com um `docker-compose.override.yml` local
+   (fica fora do git):
+   ```yaml
+   services:
+     bot:
+       ports: ["172.16.0.1:3000:3000"]   # IP de docker0: veja com `ip -4 addr show docker0`
+   ```
+2. No cluster, crie um `Service` sem seletor, um `EndpointSlice` apontando para esse IP e um
+   `Ingress` que publique só `/goalfy/webhook` e `/health` no host do bot. Os pods alcançam o IP de
+   `docker0`, mas a internet não.
+3. No DNS (Cloudflare com proxy laranja), aponte o subdomínio para a VPS, como os demais serviços.
+4. No `.env`, defina `WEBHOOK_PUBLIC_URL=https://<subdomínio>` e suba com `docker compose up -d`.
+
 ---
 
 ## 9. Problemas comuns

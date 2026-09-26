@@ -92,6 +92,20 @@ describe('BoardService', () => {
     assert.equal(form.fields.front?.fieldInfoId, 'f-frente');
   });
 
+  it('não trata "E-mail do solicitante" como campo automático (o bot não sabe o e-mail)', async () => {
+    const { client } = fakeGoalfy();
+    const withEmail = [
+      {
+        ...boardFields[0]!,
+        fields: [...boardFields[0]!.fields, { id: 'f-email', title: 'E-mail do solicitante', fieldType: 'email', options: [] }],
+      },
+    ];
+    (client as unknown as { getBoardFields: () => Promise<unknown> }).getBoardFields = async () => withEmail;
+    const form = await boardFor(client).createForm();
+    assert.equal(form.fields.requester, undefined);
+    assert.ok(form.allFields.some((f) => f.fieldInfoId === 'f-email'), 'continua no formulário como campo comum');
+  });
+
   it('ignora fases arquivadas e usa a flag `done`', async () => {
     const { client } = fakeGoalfy();
     const board = boardFor(client);

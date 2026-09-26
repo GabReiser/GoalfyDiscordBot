@@ -29,6 +29,17 @@ const ENV_FIELD: Record<LogicalField, keyof GoalfyConfig> = {
   requester: 'GOALFY_FIELD_REQUESTER',
 };
 
+/**
+ * Tipos aceitos para campos que o bot preenche sozinho. Evita, por exemplo, gravar o nome
+ * do Discord em "E-mail do solicitante" (o bot não conhece o e-mail de quem abriu o tópico).
+ */
+const ROLE_TYPES: Partial<Record<LogicalField, RegExp>> = {
+  title: /text/,
+  description: /text/,
+  discordLink: /text|url|link/,
+  requester: /^(shorttext|text|longtext)$/,
+};
+
 /** Metadados do board (fases e formulário), com cache em memória. */
 export class BoardService {
   private phasesCache?: { at: number; value: Phase[] };
@@ -157,16 +168,11 @@ export class BoardService {
       const envId = this.config[ENV_FIELD[key]] as string | undefined;
       const field = envId
         ? (allFields.find((f) => f.fieldInfoId === envId) ?? { fieldInfoId: envId, name: key, type: 'shorttext', required: false, options: [], index: 0 })
-        : matchField(allFields, FIELD_ALIASES[key], used);
+        : matchField(ROLE_TYPES[key] ? allFields.filter((f) => ROLE_TYPES[key]!.test(f.type)) : allFields, FIELD_ALIASES[key], used);
       if (field) {
         fields[key] = field;
         used.add(field.fieldInfoId);
       }
-    }
-
-    const missing = allFields.filter((f) => f.required && !used.has(f.fieldInfoId));
-    if (missing.length) {
-      logger.warn(`Campos obrigatórios sem mapeamento: ${missing.map((f) => `${f.name} (${f.fieldInfoId})`).join(', ')}`);
     }
 
     const value = { modelId, initialPhase, fields, allFields };
