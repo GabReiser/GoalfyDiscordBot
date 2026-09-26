@@ -1,0 +1,36 @@
+{
+  "name": "goalfy-discord-bot",
+  "version": "0.1.0",
+  "description": "Bot do Discord que integra tópicos de Bugs/Melhorias ao board Kanban da Goalfy",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "deploy-commands": "tsx src/scripts/deploy-commands.ts",
+    "discover": "tsx src/scripts/discover.ts",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GabReiser/GoalfyDiscordBot.git"
+  },
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/GabReiser/GoalfyDiscordBot/issues"
+  },
+  "homepage": "https://github.com/GabReiser/GoalfyDiscordBot#readme",
+  "dependencies": {
+    "discord.js": "^14.27.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}
