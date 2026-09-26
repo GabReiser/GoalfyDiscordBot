@@ -117,41 +117,44 @@ describe('BoardService', () => {
 });
 
 describe('CardService.create', () => {
+  // IDs dos campos em boardFields: f-titulo, f-desc, f-tipo, f-sev, f-frente
   const input = {
     title: 'Erro 500 ao salvar',
-    description: 'Detalhes',
-    front: 'Sustentação',
-    type: 'Regressão',
-    origin: 'Suporte',
-    severity: 'S2 — Alto',
+    values: { 'f-desc': ['Detalhes'], 'f-tipo': ['bug'], 'f-sev': ['S2 — Alto'], 'f-frente': ['Sustentação'] },
     requester: 'Ana',
-    discordLink: 'https://discord.com/channels/1/2',
+    discordUrl: 'https://discord.com/channels/1/2',
   };
 
-  it('casa valores com as opções dos campos e manda o resto como comentário', async () => {
+  it('cria pelo Formulário Inicial, casando seleções com as opções', async () => {
     const { client, calls } = fakeGoalfy();
     await new CardService(client, boardFor(client)).create(input);
 
     const create = calls.find((c) => c.op === 'create')!;
     assert.equal(create.args[0], 'MODEL-INICIAL');
     const values = Object.fromEntries((create.args[1] as { fieldInfoId: string; value: unknown }[]).map((f) => [f.fieldInfoId, f.value]));
+    assert.equal(values['f-titulo'], 'Erro 500 ao salvar', 'campo título recebe o título do card');
+    assert.equal(values['f-tipo'], 'Bug', 'caixa diferente casa com a opção');
     assert.equal(values['f-sev'], 'S2 - Alto', 'travessão/acento não impedem o match');
     assert.deepEqual(values['f-frente'], ['Sustentação'], 'checkbox é array');
-    assert.equal(values['f-tipo'], undefined, '"Regressão" não é opção do campo Tipo');
-
-    const comment = calls.find((c) => c.op === 'comment')!.args[0] as string;
-    assert.match(comment, /\*\*Tipo:\*\* Regressão/);
-    assert.match(comment, /\*\*Origem:\*\* Suporte/);
+    assert.equal(calls.find((c) => c.op === 'title')!.args[0], 'Erro 500 ao salvar');
   });
 
-  it('prefixa o tipo no título quando ele não ficou em um campo', async () => {
+  it('sem campo para o link do tópico, o link vai no comentário de origem', async () => {
     const { client, calls } = fakeGoalfy();
-    const cards = new CardService(client, boardFor(client));
-    await cards.create(input);
-    assert.equal(calls.find((c) => c.op === 'title')!.args[0], '[Regressão] Erro 500 ao salvar');
+    await new CardService(client, boardFor(client)).create(input);
+    const comment = calls.find((c) => c.op === 'comment')!.args[0] as string;
+    assert.match(comment, /Card aberto via Discord por Ana/);
+    assert.match(comment, /Tópico: https:\/\/discord.com\/channels\/1\/2/);
+  });
 
-    calls.length = 0;
-    await cards.create({ ...input, type: 'Bug' });
-    assert.equal(calls.find((c) => c.op === 'title')!.args[0], 'Erro 500 ao salvar');
+  it('valor fora das opções em campo obrigatório é recusado antes de chamar a API', async () => {
+    const { client, calls } = fakeGoalfy();
+    const withRequired = boardFields.map((g) => ({ ...g, fields: g.fields.map((f) => ({ ...f, required: f.id === 'f-tipo' })) }));
+    (client as unknown as { getBoardFields: () => Promise<unknown> }).getBoardFields = async () => withRequired;
+    await assert.rejects(
+      new CardService(client, boardFor(client)).create({ ...input, values: { ...input.values, 'f-tipo': ['Regressão'] } }),
+      (e: Error) => e.name === 'InvalidFieldValuesError' && /não é uma opção de "Tipo"/.test(e.message),
+    );
+    assert.equal(calls.some((c) => c.op === 'create'), false);
   });
 });

@@ -129,6 +129,12 @@ export class GoalfyClient {
     return this.request('GET', `/boards/${enc(boardId)}/activities?limit=${limit}&offset=${offset}`);
   }
 
+  // ── Formulários ───────────────────────────────────────────────────────────
+  /** Formulário completo, com `required`, `helpText` e opções (é o que o front usa). */
+  getModel(modelId: string) {
+    return this.request('GET', `/models/${enc(modelId)}`);
+  }
+
   // ── Fases ─────────────────────────────────────────────────────────────────
   listPhases(boardId: string) {
     return this.request('GET', `/phases/board/${enc(boardId)}`);

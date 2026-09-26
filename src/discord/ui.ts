@@ -5,6 +5,7 @@ import {
   EmbedBuilder,
   LabelBuilder,
   ModalBuilder,
+  type ModalSubmitInteraction,
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
   TextInputBuilder,
@@ -14,8 +15,9 @@ import {
 } from 'discord.js';
 import type { BoardService } from '../goalfy/board.js';
 import { GoalfyError } from '../goalfy/client.js';
-import { type Card, type Phase, parseApiDate } from '../goalfy/types.js';
-import { type Choice, FRONTS, ORIGINS, SEVERITIES, TYPES } from '../process.js';
+import { fieldKind, isMulti } from '../goalfy/formPlan.js';
+import { type Card, type FormField, type Phase, parseApiDate } from '../goalfy/types.js';
+import type { Choice } from '../process.js';
 
 export const COLORS = {
   brand: 0x6c5ce7,
@@ -35,7 +37,7 @@ export const IDS = {
   triageResolve: 'triage:resolve',
   triageReject: 'triage:reject',
   // Classificação (passo 1 da criação)
-  classify: (field: ClassifyField) => `classify:${field}`,
+  classify: (fieldInfoId: string) => `classify:${fieldInfoId}`,
   classifyNext: 'classify:next',
   classifyCancel: 'classify:cancel',
   // Modais
@@ -44,16 +46,17 @@ export const IDS = {
   waitingModal: 'modal:waiting',
   resolveModal: 'modal:resolve',
   rejectModal: 'modal:reject',
+  moveModal: (cardId: string) => `modal:move:${cardId}`,
   // Card
   move: (cardId: string) => `card:move:${cardId}`,
   moveTo: (cardId: string) => `card:moveTo:${cardId}`,
   refresh: (cardId: string) => `card:refresh:${cardId}`,
+  fillAndMove: (cardId: string) => `card:fill:${cardId}`,
   view: 'card:view',
   list: (page: number, phaseId: string | undefined, search: string | undefined) =>
     `card:list:${page}:${phaseId ?? '_'}:${(search ?? '').slice(0, 60)}`,
 } as const;
 
-export type ClassifyField = 'front' | 'type' | 'origin' | 'severity';
 
 export const truncate = (s: string, max: number) => (s.length > max ? `${s.slice(0, max - 1)}…` : s);
 
@@ -165,52 +168,66 @@ export function triagePanel() {
   ];
 }
 
-// ── Classificação (passo 1) ─────────────────────────────────────────────────
+// ── Formulários dinâmicos (campos vindos da Goalfy) ─────────────────────────
 
-export interface Classification {
-  front?: string;
-  type?: string;
-  origin?: string;
-  severity?: string;
-}
+/** Valores escolhidos/digitados por fieldInfoId. */
+export type FormValues = Record<string, string[]>;
 
-function select(field: ClassifyField, placeholder: string, choices: readonly Choice[], selected: string | undefined) {
-  return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId(IDS.classify(field))
-      .setPlaceholder(placeholder)
-      .addOptions(
-        choices.map((c) => {
-          const opt = new StringSelectMenuOptionBuilder()
-            .setLabel(c.label)
-            .setValue(c.value)
-            .setEmoji(c.emoji)
-            .setDefault(c.value === selected);
-          if (c.description) opt.setDescription(truncate(c.description, 100));
-          return opt;
-        }),
+/** Rótulo de componente no Discord: máx. 45 caracteres; obrigatório ganha "*". */
+const fieldLabel = (f: FormField) => truncate(`${f.name}${f.required ? ' *' : ''}`, 45);
+
+/**
+ * Select de um campo de seleção. O valor de cada opção é o ÍNDICE (opções da Goalfy podem
+ * passar dos 100 caracteres permitidos em `value`); `selectedOptions` converte de volta.
+ */
+function fieldSelect(customId: string, f: FormField, selected: string[], inModal = false) {
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(customId)
+    .setPlaceholder(fieldLabel(f))
+    .addOptions(
+      f.options.slice(0, 25).map((o, i) =>
+        new StringSelectMenuOptionBuilder()
+          .setLabel(truncate(o, 100))
+          .setValue(String(i))
+          .setDefault(selected.includes(o)),
       ),
-  );
+    );
+  if (isMulti(f)) menu.setMinValues(f.required ? 1 : 0).setMaxValues(Math.min(f.options.length, 25));
+  // "required" só existe em selects dentro de modais; numa mensagem o Discord recusaria o componente.
+  if (inModal && !f.required) menu.setRequired(false);
+  return menu;
 }
 
-export function classifyMessage(c: Classification, error?: string) {
+export const selectedOptions = (f: FormField, indexes: readonly string[]) =>
+  indexes.map((i) => f.options[Number(i)]).filter((o): o is string => o !== undefined);
+
+/** Passo 1 da criação: um select por campo de seleção do Formulário Inicial. */
+export function classifyMessage(fields: FormField[], values: FormValues, error?: string) {
+  const help = fields
+    .filter((f) => f.helpText)
+    .map((f) => `• **${f.name}**: ${truncate(f.helpText!, 150)}`)
+    .join('\n');
   const embed = new EmbedBuilder()
     .setColor(error ? COLORS.warn : COLORS.brand)
     .setTitle('📋 Classificar a demanda')
     .setDescription(
       [
-        'Passo 1 de 2 — escolha **Tipo**, **Frente**, **Origem** e **Severidade**.',
-        'A frente é sugerida a partir do tipo. Lembre: _a triagem classifica, Produto/Tecnologia prioriza._',
+        fields.length
+          ? 'Passo 1 de 2: escolha as opções abaixo (as que já vieram marcadas foram deduzidas do tópico).'
+          : 'Passo 1 de 2: nada para classificar, clique em Continuar.',
+        '_A triagem classifica; Produto/Tecnologia prioriza._',
+        help,
         error ? `\n⚠️ ${error}` : '',
-      ].join('\n'),
+      ]
+        .filter(Boolean)
+        .join('\n'),
     );
   return {
     embeds: [embed],
     components: [
-      select('type', 'Tipo', TYPES, c.type),
-      select('front', 'Frente', FRONTS, c.front),
-      select('origin', 'Origem', ORIGINS, c.origin),
-      select('severity', 'Severidade (para problemas/bugs)', SEVERITIES, c.severity),
+      ...fields.map((f) =>
+        new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(fieldSelect(IDS.classify(f.fieldInfoId), f, values[f.fieldInfoId] ?? [])),
+      ),
       new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder().setCustomId(IDS.classifyNext).setStyle(ButtonStyle.Success).setLabel('Continuar').setEmoji('➡️'),
         new ButtonBuilder().setCustomId(IDS.classifyCancel).setStyle(ButtonStyle.Secondary).setLabel('Cancelar'),
@@ -219,51 +236,73 @@ export function classifyMessage(c: Classification, error?: string) {
   };
 }
 
-// ── Modais ──────────────────────────────────────────────────────────────────
-
 const text = (id: string, style: TextInputStyle, opts: { value?: string; max: number; required?: boolean; placeholder?: string }) => {
   const input = new TextInputBuilder().setCustomId(id).setStyle(style).setMaxLength(opts.max).setRequired(opts.required ?? false);
   if (opts.value) input.setValue(truncate(opts.value, opts.max));
-  if (opts.placeholder) input.setPlaceholder(opts.placeholder);
+  if (opts.placeholder) input.setPlaceholder(truncate(opts.placeholder, 100));
   return input;
 };
 
 const label = (name: string, input: TextInputBuilder, description?: string) => {
-  const l = new LabelBuilder().setLabel(name).setTextInputComponent(input);
-  return description ? l.setDescription(description) : l;
+  const l = new LabelBuilder().setLabel(truncate(name, 45)).setTextInputComponent(input);
+  return description ? l.setDescription(truncate(description, 100)) : l;
 };
 
-export interface CardDraft {
-  title: string;
-  description: string;
-  expectedResult: string;
-  client: string;
-  ticketLink: string;
+/** Id do componente de um campo dentro de um modal. */
+export const fieldInputId = (fieldInfoId: string) => `f:${fieldInfoId}`;
+
+/** Componente de modal para um campo da Goalfy (texto curto, longo ou select). */
+export function fieldInput(f: FormField, value: string[] = []): LabelBuilder {
+  const kind = fieldKind(f);
+  if (kind === 'select') {
+    return new LabelBuilder()
+      .setLabel(fieldLabel(f))
+      .setStringSelectMenuComponent(fieldSelect(fieldInputId(f.fieldInfoId), f, value, true))
+      .setDescription(truncate(f.helpText ?? (isMulti(f) ? 'Pode escolher mais de uma' : 'Escolha uma opção'), 100));
+  }
+  const placeholder = f.options.length ? `Ex.: ${f.options.slice(0, 4).join(', ')}` : undefined;
+  const style = kind === 'longtext' ? TextInputStyle.Paragraph : TextInputStyle.Short;
+  return label(
+    fieldLabel(f),
+    text(fieldInputId(f.fieldInfoId), style, { value: value[0], max: kind === 'longtext' ? 4000 : 1000, required: f.required, placeholder }),
+    f.helpText,
+  );
 }
 
-export function cardModal(d: CardDraft) {
+/** Passo 2 da criação: título + campos de texto (e selects que não couberam no passo 1). */
+export function cardModal(title: string, fields: FormField[], values: FormValues) {
   return new ModalBuilder()
     .setCustomId(IDS.createModal)
-    .setTitle('Criar card — passo 2 de 2')
+    .setTitle('Criar card: passo 2 de 2')
     .addLabelComponents(
-      label('Título', text('title', TextInputStyle.Short, { value: d.title, max: 100, required: true })),
-      label(
-        'Descrição',
-        text('description', TextInputStyle.Paragraph, { value: d.description, max: 4000, required: true }),
-        'Resumo suficiente para entender a necessidade',
-      ),
-      label(
-        'Resultado esperado',
-        text('expectedResult', TextInputStyle.Paragraph, { value: d.expectedResult, max: 1000 }),
-        'O que caracteriza a demanda como resolvida',
-      ),
-      label('Cliente / Organização', text('client', TextInputStyle.Short, { value: d.client, max: 200 }), 'Quando aplicável'),
-      label(
-        'Link do ticket N1',
-        text('ticketLink', TextInputStyle.Short, { value: d.ticketLink, max: 300, placeholder: 'https://…' }),
-        'Quando houver',
-      ),
+      label('Título do card *', text('title', TextInputStyle.Short, { value: title, max: 100, required: true })),
+      ...fields.map((f) => fieldInput(f, values[f.fieldInfoId])),
     );
+}
+
+/** Modal com os campos obrigatórios exigidos para mover o card. */
+export function moveFieldsModal(cardId: string, phaseTitle: string, fields: FormField[]) {
+  return new ModalBuilder()
+    .setCustomId(IDS.moveModal(cardId))
+    .setTitle(truncate(`Mover para ${phaseTitle}`, 45))
+    .addLabelComponents(...fields.map((f) => fieldInput(f)));
+}
+
+/** Lê os valores de um modal para os campos informados (texto → [valor]; select → opções escolhidas). */
+export function readModalValues(interaction: ModalSubmitInteraction, fields: FormField[]): FormValues {
+  const out: FormValues = {};
+  for (const f of fields) {
+    const id = fieldInputId(f.fieldInfoId);
+    try {
+      out[f.fieldInfoId] =
+        fieldKind(f) === 'select'
+          ? selectedOptions(f, interaction.fields.getStringSelectValues(id))
+          : [interaction.fields.getTextInputValue(id).trim()].filter(Boolean);
+    } catch {
+      out[f.fieldInfoId] = [];
+    }
+  }
+  return out;
 }
 
 export function linkModal() {

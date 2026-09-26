@@ -15,11 +15,13 @@ import {
   TimestampStyles,
 } from 'discord.js';
 import type { BotContext } from '../context.js';
-import { type Card, toCards } from '../goalfy/types.js';
+import { type Card, type FormField, toCards } from '../goalfy/types.js';
 import { logger } from '../logger.js';
 import { normalize, TOPIC_STATUS } from '../process.js';
-import { syncCard } from './sync.js';
+import { requestMove } from './move.js';
 import { linkExistingCard, parseCardRef, postTriagePanel, startCardFlow } from './triage.js';
+import { planCreate } from '../goalfy/formPlan.js';
+import { checkDiscordSetup } from './setup.js';
 import { isMonitoredForum, requireTriage } from './topics.js';
 import {
   cardActions,
@@ -125,15 +127,6 @@ async function showCard(ctx: BotContext, cardId: string) {
   return { embeds: [embed], components: [cardActions(ctx.board, card.id)] };
 }
 
-async function moveCard(ctx: BotContext, cardId: string, phaseRef: string, byName: string) {
-  const phase = await ctx.board.phase(phaseRef);
-  if (!phase) throw new Error('Fase não encontrada neste board.');
-  await ctx.cards.move(cardId, phase);
-  await ctx.cards.comment(cardId, `Movido para "${phase.title}" por ${byName}.`).catch(() => {});
-  await syncCard(ctx, cardId, { by: byName, comments: false });
-  return phase;
-}
-
 async function listPage(ctx: BotContext, page: number, phaseId?: string, search?: string) {
   let cards: Card[];
   let hasNext: boolean;
@@ -197,9 +190,9 @@ async function handleCard(ctx: BotContext, interaction: ChatInputCommandInteract
   if (sub === 'mover') {
     if (!(await requireTriage(ctx, interaction))) return;
     const cardId = resolveCardId(ctx, interaction);
-    await interaction.deferReply();
-    const phase = await moveCard(ctx, cardId, interaction.options.getString('fase', true), interaction.user.displayName);
-    await interaction.editReply({ embeds: [okEmbed(`Card [#${cardId}](${ctx.board.cardUrl(cardId)}) movido para **${phase.title}**.`)] });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const fase = interaction.options.getString('fase', true);
+    await interaction.editReply(await requestMove(ctx, interaction.user.id, cardId, fase, interaction.user.displayName));
     return;
   }
 
@@ -224,8 +217,9 @@ async function handleCard(ctx: BotContext, interaction: ChatInputCommandInteract
 // ── /triagem ────────────────────────────────────────────────────────────────
 
 function counts(title: string, data: Record<string, number>) {
-  const entries = Object.entries(data);
-  return { name: title, value: entries.length ? entries.map(([k, v]) => `${k}: **${v}**`).join('\n') : '—', inline: true };
+  const entries = Object.entries(data).sort((a, b) => b[1] - a[1]);
+  const value = entries.length ? entries.map(([k, v]) => `${k}: **${v}**`).join('\n') : '—';
+  return { name: truncate(title, 256), value: truncate(value, 1024), inline: true };
 }
 
 async function handleTriage(ctx: BotContext, interaction: ChatInputCommandInteraction) {
@@ -270,10 +264,9 @@ async function handleTriage(ctx: BotContext, interaction: ChatInputCommandIntera
             { name: 'Não procede', value: String(r.rejected), inline: true },
             { name: 'Sem destino', value: String(r.pending), inline: true },
             { name: 'Tempo médio até destino', value: avg, inline: true },
-            counts('Por frente', r.byFront),
-            counts('Por tipo', r.byType),
-            counts('Por origem', r.byOrigin),
-            counts('Por severidade', r.bySeverity),
+            ...Object.entries(r.byField)
+              .slice(0, 12)
+              .map(([field, data]) => counts(`Por ${field}`, data)),
           ),
       ],
     });
@@ -298,9 +291,21 @@ async function handleGoalfy(ctx: BotContext, interaction: ChatInputCommandIntera
   ctx.board.invalidate();
   const phases = await ctx.board.phases();
   const form = await ctx.board.createForm();
-  const mapped = Object.entries(form.fields).map(([k, f]) => `\`${k}\` → **${f.name}** (\`${f.fieldInfoId}\`)`);
-  const used = new Set(Object.values(form.fields).map((f) => f.fieldInfoId));
-  const unmapped = form.allFields.filter((f) => !used.has(f.fieldInfoId)).map((f) => `${f.required ? '⚠️ ' : ''}${f.name} (\`${f.fieldInfoId}\`)`);
+  const plan = planCreate(form);
+  const name = (f: FormField) => `${f.name}${f.required ? ' *' : ''}`;
+  const creation = [
+    `**Passo 1:** ${plan.selects.map(name).join(', ') || '—'}`,
+    `**Modal:** Título do card *${plan.modal.length ? `, ${plan.modal.map(name).join(', ')}` : ''}`,
+    plan.auto.length ? `**Automático:** ${plan.auto.map((f) => f.name).join(', ')}` : '',
+    plan.skipped.length ? `**Não perguntado:** ${plan.skipped.map((f) => f.name).join(', ')}` : '',
+    plan.missingRequired.length ? `⚠️ **Obrigatórios que o bot não preenche:** ${plan.missingRequired.map((f) => f.name).join(', ')}` : '',
+  ].filter(Boolean);
+  const phaseRules: string[] = [];
+  for (const p of phases) {
+    const required = (await ctx.board.phaseFields(p).catch(() => [])).filter((f) => f.required);
+    if (required.length) phaseRules.push(`**${p.title}** (${ctx.board.isDone(p) ? 'ao entrar' : 'antes de avançar'}): ${required.map((f) => f.name).join(', ')}`);
+  }
+  const setupProblems = await checkDiscordSetup(ctx);
 
   await interaction.editReply({
     embeds: [
@@ -312,9 +317,19 @@ async function handleGoalfy(ctx: BotContext, interaction: ChatInputCommandIntera
           { name: 'Board', value: `\`${ctx.board.boardId}\``, inline: true },
           { name: 'Formulário (modelId)', value: `\`${form.modelId}\``, inline: true },
           { name: 'Sincronização', value: `a cada ${ctx.config.SYNC_INTERVAL_SECONDS}s`, inline: true },
-          { name: 'Fases', value: truncate(phases.map((p) => `${ctx.board.isDone(p) ? '✅' : '•'} ${p.title} (\`${p.id}\`)`).join('\n') || '—', 1024) },
-          { name: 'Campos mapeados', value: truncate(mapped.join('\n') || '—', 1024) },
-          { name: 'Campos do formulário sem mapeamento', value: truncate(unmapped.join('\n') || '—', 1024) },
+          {
+            name: 'Fases',
+            value: truncate(
+              phases.map((p) => `${ctx.board.isCancel(p) ? '❌' : ctx.board.isDone(p) ? '✅' : '•'} ${p.title}`).join('\n') || '—',
+              1024,
+            ),
+          },
+          { name: 'Criação de card (* = obrigatório)', value: truncate(creation.join('\n'), 1024) },
+          { name: 'Fases com campos obrigatórios', value: truncate(phaseRules.join('\n') || '—', 1024) },
+          {
+            name: 'Servidor do Discord',
+            value: truncate(setupProblems.map((p) => `⚠️ ${p}`).join('\n') || '✅ fórum, tags, permissões e cargos ok', 1024),
+          },
         ),
     ],
   });
@@ -423,8 +438,7 @@ export async function onCardSelect(ctx: BotContext, interaction: StringSelectMen
       if (!(await requireTriage(ctx, interaction))) return;
       await interaction.deferUpdate();
       const cardId = arg[0]!;
-      const phase = await moveCard(ctx, cardId, interaction.values[0]!, interaction.user.displayName);
-      await interaction.editReply({ content: '', embeds: [okEmbed(`Card #${cardId} movido para **${phase.title}**.`)], components: [] });
+      await interaction.editReply(await requestMove(ctx, interaction.user.id, cardId, interaction.values[0]!, interaction.user.displayName));
     } else if (action === 'view') {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       await interaction.editReply(await showCard(ctx, interaction.values[0]!));

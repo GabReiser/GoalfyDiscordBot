@@ -1,15 +1,17 @@
 import type { GoalfyConfig } from '../config.js';
 import { logger } from '../logger.js';
-import { DONE_PHASE_PATTERN, FIELD_ALIASES, type LogicalField, normalize } from '../process.js';
+import { CANCEL_PHASE_PATTERN, DONE_PHASE_PATTERN, FIELD_ALIASES, type LogicalField, normalize } from '../process.js';
 import type { CardFilter, GoalfyClient } from './client.js';
-import { type Card, type FormField, type Phase, toCardPage, toPhaseFields, toPhases } from './types.js';
+import { type Card, type FormField, type Phase, toCardPage, toFormModel, toPhaseFields, toPhases } from './types.js';
 
 const CACHE_TTL_MS = 5 * 60_000;
 
 export interface CreateForm {
   modelId: string;
   initialPhase: Phase;
+  /** Campos com papel conhecido pelo bot, detectados pelo nome (título, descrição, link do Discord…). */
   fields: Partial<Record<LogicalField, FormField>>;
+  /** Todos os campos do Formulário Inicial, na ordem da Goalfy, com `required`. */
   allFields: FormField[];
 }
 
@@ -31,6 +33,7 @@ const ENV_FIELD: Record<LogicalField, keyof GoalfyConfig> = {
 export class BoardService {
   private phasesCache?: { at: number; value: Phase[] };
   private formCache?: { at: number; value: CreateForm };
+  private modelCache = new Map<string, { at: number; value: FormField[] }>();
 
   constructor(
     private readonly client: GoalfyClient,
@@ -52,6 +55,21 @@ export class BoardService {
   invalidate() {
     this.phasesCache = undefined;
     this.formCache = undefined;
+    this.modelCache.clear();
+  }
+
+  /** Campos de um formulário (GET /models/{id}), com cache. */
+  async modelFields(modelId: string): Promise<FormField[]> {
+    const hit = this.modelCache.get(modelId);
+    if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value;
+    const value = toFormModel(await this.client.getModel(modelId))?.fields ?? [];
+    this.modelCache.set(modelId, { at: Date.now(), value });
+    return value;
+  }
+
+  /** Campos do formulário de uma fase (preenchidos enquanto o card está nela). */
+  async phaseFields(phase: Phase): Promise<FormField[]> {
+    return phase.modelId ? this.modelFields(phase.modelId) : [];
   }
 
   async phases(): Promise<Phase[]> {
@@ -74,6 +92,11 @@ export class BoardService {
       return configured.some((c) => c === phase.id || normalize(c) === normalize(phase.title));
     }
     return phase.done ?? DONE_PHASE_PATTERN.test(phase.title);
+  }
+
+  /** Fase final de cancelamento/arquivamento (ex.: "Cancelado/Arquivado"). */
+  isCancel(phase: Phase): boolean {
+    return this.isDone(phase) && CANCEL_PHASE_PATTERN.test(phase.title);
   }
 
   /**
@@ -122,14 +145,18 @@ export class BoardService {
     if (!modelId) {
       throw new Error('Não encontrei o Formulário Inicial do board. Defina GOALFY_MODEL_ID no .env (veja `npm run discover`).');
     }
-    const allFields = startForm?.fields ?? [];
+    // /models traz o "obrigatório" de cada campo; /boards/{id}/fields não. Se falhar, segue sem ele.
+    const allFields = await this.modelFields(modelId).catch((e) => {
+      logger.warn(`Não consegui ler o formulário ${modelId}; usando /boards/{id}/fields`, e);
+      return startForm?.fields ?? [];
+    });
 
     const fields: CreateForm['fields'] = {};
     const used = new Set<string>();
     for (const key of Object.keys(FIELD_ALIASES) as LogicalField[]) {
       const envId = this.config[ENV_FIELD[key]] as string | undefined;
       const field = envId
-        ? (allFields.find((f) => f.fieldInfoId === envId) ?? { fieldInfoId: envId, name: key, type: 'text', required: false, options: [] })
+        ? (allFields.find((f) => f.fieldInfoId === envId) ?? { fieldInfoId: envId, name: key, type: 'shorttext', required: false, options: [], index: 0 })
         : matchField(allFields, FIELD_ALIASES[key], used);
       if (field) {
         fields[key] = field;

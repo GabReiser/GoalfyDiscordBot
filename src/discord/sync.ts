@@ -1,7 +1,7 @@
 import { type AnyThreadChannel, EmbedBuilder, time, TimestampStyles } from 'discord.js';
 import type { BotContext } from '../context.js';
 import { GoalfyError } from '../goalfy/client.js';
-import { type Phase, parseApiDate, toComments } from '../goalfy/types.js';
+import { type Card, commentText, isFilled, type Phase, parseApiDate, toComments } from '../goalfy/types.js';
 import { logger } from '../logger.js';
 import { BOT_COMMENT_PREFIX } from '../process.js';
 import type { CardLink } from '../store.js';
@@ -21,8 +21,14 @@ export async function fetchThread(ctx: BotContext, threadId: string): Promise<An
  * Registra uma mudança de fase: atualiza o banco, avisa no tópico, espelha a
  * fase nas tags e, se for fase final, marca o tópico como Resolvido e encerra.
  */
-export async function applyPhaseChange(ctx: BotContext, link: CardLink, phase: Phase | undefined, opts: { by?: string } = {}) {
+export async function applyPhaseChange(
+  ctx: BotContext,
+  link: CardLink,
+  phase: Phase | undefined,
+  opts: { by?: string; card?: Card } = {},
+) {
   const done = phase ? ctx.board.isDone(phase) : false;
+  const cancelled = phase ? ctx.board.isCancel(phase) : false;
   const from = link.phaseName ?? '—';
   const to = phase?.title ?? '—';
   ctx.store.updatePhase(link.cardId, phase?.id ?? null, phase?.title ?? null, done);
@@ -31,20 +37,35 @@ export async function applyPhaseChange(ctx: BotContext, link: CardLink, phase: P
   if (!thread) return;
 
   const embed = new EmbedBuilder()
-    .setColor(done ? COLORS.done : COLORS.info)
-    .setTitle(done ? '✅ Demanda entregue' : '🔀 Card mudou de fase')
+    .setColor(cancelled ? COLORS.muted : done ? COLORS.done : COLORS.info)
+    .setTitle(cancelled ? '❌ Card cancelado/arquivado' : done ? '✅ Demanda entregue' : '🔀 Card mudou de fase')
     .setDescription(`**${from}** → **${to}**`)
     .setURL(ctx.board.cardUrl(link.cardId))
     .setFooter({ text: `Card #${link.cardId}${opts.by ? ` · movido por ${opts.by}` : ''}` })
     .setTimestamp();
-  if (done) embed.addFields({ name: '​', value: 'Se o problema voltar a acontecer, responda aqui neste tópico. 🙌' });
+  if (cancelled && phase && opts.card) {
+    const reason = await phaseFormText(ctx, opts.card, phase);
+    if (reason) embed.addFields({ name: 'Motivo', value: truncate(reason, 1024) });
+  } else if (done) {
+    embed.addFields({ name: '\u200b', value: 'Se o problema voltar a acontecer, responda aqui neste tópico. 🙌' });
+  }
 
   await thread.send({ content: done ? `<@${link.createdBy}>` : undefined, embeds: [embed] });
   await applyPhaseTag(ctx, thread, phase);
   if (done) {
-    await setTopicStatus(ctx, thread, 'resolved');
-    if (ctx.config.ARCHIVE_ON_DONE) await closeThread(thread, 'Card entregue na Goalfy');
+    await setTopicStatus(ctx, thread, cancelled ? 'rejected' : 'resolved');
+    if (ctx.config.ARCHIVE_ON_DONE) await closeThread(thread, cancelled ? 'Card cancelado na Goalfy' : 'Card entregue na Goalfy');
   }
+}
+
+/** Primeiro texto preenchido no formulário de uma fase do card (ex.: "Motivo do arquivamento"). */
+async function phaseFormText(ctx: BotContext, card: Card, phase: Phase): Promise<string | undefined> {
+  const history = card.phaseForms.find((h) => h.phaseId === phase.id);
+  if (!history) return undefined;
+  const fields = await ctx.board.phaseFields(phase).catch(() => []);
+  const textIds = new Set(fields.filter((f) => /text/.test(f.type)).map((f) => f.fieldInfoId));
+  const hit = history.fields.find((f) => textIds.has(f.infoId) && isFilled(f.value));
+  return hit ? commentText(String(hit.value)) || String(hit.value) : undefined;
 }
 
 /** Marca como vistos os comentários atuais do card (para não despejar o histórico no tópico). */
@@ -95,7 +116,7 @@ async function syncLink(ctx: BotContext, link: CardLink, opts: { by?: string; co
 
   const phase = await ctx.board.phaseOf(card);
   const changed = phase ? phase.id !== link.phaseId : !!card.phaseName && card.phaseName !== link.phaseName;
-  if (changed) await applyPhaseChange(ctx, link, phase, { by: opts.by });
+  if (changed) await applyPhaseChange(ctx, link, phase, { by: opts.by, card });
   if (opts.comments ?? ctx.config.SYNC_COMMENTS) await syncComments(ctx, link);
 }
 

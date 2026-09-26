@@ -30,7 +30,7 @@ Tópico aberto no fórum N2/N3
    │  bot marca 🔎 Em Triagem, aponta o que falta no relato e sugere cards parecidos
    ▼
 Painel da triagem (só quem tem o cargo de N2/N3)
-   ├─ 📋 Criar card ──► classificar (Tipo, Frente, Origem, Severidade) ──► formulário ──► card na Goalfy
+   ├─ 📋 Criar card ──► selects do Formulário Inicial ──► modal com os textos ──► card na Goalfy
    ├─ 🔗 Vincular card existente (duplicidade)
    ├─ ⏳ Pedir informação  ──► marca o solicitante; quando ele responde, volta para 🔎
    ├─ ✅ Resolvido sem card ──► registra como foi resolvido e arquiva o tópico
@@ -40,7 +40,8 @@ Card vinculado (📋 Card Criado)
    │  o card leva o link do tópico e o tópico fica com o card fixado
    │  mudanças de fase e comentários feitos na Goalfy aparecem no tópico
    ▼
-Card chega na fase final ──► tópico vira ✅ Resolvido, o solicitante é marcado e o tópico é arquivado
+Card chega na fase final ──► ✅ Resolvido (entrega) ou ❌ Não procede (cancelado/arquivado, com o motivo);
+                             o solicitante é marcado e o tópico é arquivado
 ```
 
 **Comandos**
@@ -195,16 +196,19 @@ https://discord.com/oauth2/authorize?client_id=CLIENT_ID&scope=bot+applications.
 | **Webhook + polling** | A Goalfy avisa mudanças de fase por webhook (tempo real), mas **não tem evento para comentários**. O polling (a cada `SYNC_INTERVAL_SECONDS`) sincroniza comentários e cobre webhooks perdidos |
 | **Lock por card** (`syncCard`) | Webhook, polling e o comando `/card mover` podem processar o mesmo card ao mesmo tempo; o lock evita anunciar a mesma mudança duas vezes |
 | **Normalizadores tolerantes** (`goalfy/types.ts`) | Os exemplos da documentação pública da Goalfy diferem das respostas reais (ver [6.3](#63-divergências-entre-a-documentação-pública-e-a-api-real)) |
-| **Regras do processo em um arquivo só** (`process.ts`) | Tipos, frentes, severidades e status mudam com o processo, não com o código |
+| **Formulário dirigido pela Goalfy** (`goalfy/formPlan.ts`) | O bot lê o Formulário Inicial e os formulários de fase do board (`GET /models/{id}`) e monta selects e modais a partir deles. Mudou um campo na Goalfy? O bot acompanha, sem deploy |
+| **Regras do processo em um arquivo só** (`process.ts`) | Status do tópico, sugestões (ex.: tag "Major" → severidade) e padrões de nome mudam com o processo, não com o código |
 | **Estado em memória só para rascunhos** | A classificação entre o passo 1 e o passo 2 da criação vive num `Map` por 30 min; perder isso num restart custa um clique |
 
 ### Fluxo: criar um card
 
 ```
 Triagem clica "📋 Criar card"
-  → bot responde (efêmero) com 4 selects: Tipo, Frente, Origem, Severidade   [triage.startCardFlow]
-  → cada seleção atualiza a mesma mensagem (a frente é sugerida pelo tipo)    [triage.onClassifySelect]
-  → "Continuar" abre um modal pré-preenchido com o texto do tópico           [triage.onClassifyNext]
+  → bot lê o Formulário Inicial e monta o plano (formPlan.planCreate):       [triage.startCardFlow]
+       até 4 campos de seleção viram selects; textos vão para o modal
+  → selects já vêm marcados pelo tópico: tags do fórum ("Major", "Regressão")
+    e o "Origem: …" do modelo de abertura                                    [triage.suggestSelects]
+  → "Continuar" abre o modal: título + campos de texto, pré-preenchidos       [triage.onClassifyNext]
   → envio do modal:                                                           [triage.onCreateModal]
        POST /cards/form  (Formulário Inicial do board)
        PUT  /cards/{id}  (título)
@@ -219,7 +223,20 @@ Goalfy ──POST webhook──► webhook.ts ──► syncCard(cardId)   ┐
 polling a cada N s ─────────────────► syncCard(cardId)     ├─ lock por card
 /card mover ────────────────────────► syncCard(cardId)     ┘
     → GET /cards/{id}; se a fase mudou: mensagem no tópico, tag da fase e,
-      se for a fase final, tag ✅ Resolvido e tópico arquivado
+      se for a fase final, tag ✅ Resolvido (ou ❌ se for cancelamento) e tópico arquivado
+```
+
+### Fluxo: mover pelo Discord respeitando os formulários de fase
+
+```
+"Mover fase" → escolhe a fase                                              [move.requestMove]
+  → avançando? os obrigatórios da fase ATUAL precisam estar preenchidos
+    (ex.: "Mapa para Testes" em Desenvolvido); lidos de card.phasesHistory
+  → fase final? os obrigatórios DELA vão junto (ex.: "Motivo do arquivamento")
+  → falta algo: botão "📝 Preencher e mover" → modal com esses campos        [move.onFillAndMove]
+       POST /forms/{formId}/field/ (ou PUT /forms/field/{id}) na fase atual
+       PUT /cards/moveTo/{id}  ou  POST /cards/moveToDonePhase/{id} com os campos
+  → campo que o bot não sabe coletar (ex.: anexo obrigatório): orienta a mover pela Goalfy
 ```
 
 ---
@@ -243,6 +260,13 @@ um servidor pessoal para testar, isso leva 10 segundos.
 1. Crie um **canal de fórum** (ex.: `#n2-n3`).
 2. Nas configurações do fórum, crie as **tags de status** com estes nomes (emoji opcional):
    `Em Triagem` · `Aguardando Informação` · `Card Criado` · `Resolvido` · `Não Procede`
+
+   **Fórum que já existe com outras tags?** Não precisa renomear nada. Aponte cada status para
+   uma tag existente, ou desligue o status, em `DISCORD_STATUS_TAGS`, por exemplo:
+   `triage=Pendente;waiting=;card=;resolved=Resolvido;rejected=`. Status sem tag mapeada não
+   mexe nas tags do tópico (o bot só posta a mensagem e registra nas métricas). As tags que o
+   solicitante escolhe (ex.: `Major`, `Regressão`) nunca são removidas e servem para pré-selecionar
+   Severidade e Tipo (`SEVERITY_TAGS` em [src/process.ts](src/process.ts)).
 3. Opcional: crie tags de tipo (`Bug`, `Regressão`, `Melhoria`…) para o bot pré-selecionar o tipo.
    Tags com o **mesmo nome das fases do board** também funcionam: o bot mantém no tópico a tag da
    fase atual.
@@ -264,11 +288,37 @@ npm run discover -- <boardId>         # fases, formulários e mapeamento de camp
 npm run discover -- <boardId> --raw   # + respostas cruas da API
 ```
 
-O bot detecta os campos do Formulário Inicial pelo nome: *Título, Descrição, Resultado esperado,
-Frente, Tipo, Origem, Cliente, Severidade, Discord, Ticket e Solicitante*. Se algum nome for
-diferente, defina o `GOALFY_FIELD_*` correspondente com o ID mostrado pelo `discover`. Valores de
-campos de seleção são casados com as opções do campo ("S2 — Alto" encontra "S2 - Alto"). O que não
-couber em nenhum campo vai como **comentário no card**, então nenhuma informação se perde.
+**Não existe lista fixa de campos.** O bot lê o Formulário Inicial do board e pergunta o que ele
+pede: campos de seleção (até 4) viram selects no passo 1, e textos vão para o modal do passo 2. O
+`discover` mostra exatamente esse plano e as fases que exigem campos antes de mover:
+
+```
+O que o bot vai perguntar ao criar um card (* = obrigatório):
+  Passo 1 (selects):
+    • Origem * [Suporte | Consultoria | …]
+    • Tipo * [Bug | Melhoria | …]
+    • Módulo/Funcionalidade * [Board/Kanban | …]
+    • Prioridade especial * [Nenhuma | Atenção Especial | Major]
+  Passo 2 (modal):
+    • Título do card * → também preenche "Título da tarefa"
+    • Descrição *
+    • Link do figma (dev)
+    • Link RFC
+  Não perguntado (opcional): Anexo
+
+Fases com campos obrigatórios (o bot pede antes de mover):
+  • Desenvolvido (antes de avançar): Mapa para Testes *
+  • Cancelado/Arquivado (ao entrar): Motivo do arquivamento *
+```
+
+Alguns campos têm papel especial, detectado pelo nome: **título** (recebe o título do card),
+**descrição** (pré-preenchida com o texto do tópico) e **link do Discord / solicitante**
+(preenchidos automaticamente, sem perguntar). Se o nome não for reconhecido, aponte o ID em
+`GOALFY_FIELD_*`. Se não existir campo para o link do tópico, ele vai num comentário do card.
+
+Valores de seleção são casados com as opções do campo ("S2 — Alto" encontra "S2 - Alto"). Se o
+formulário tiver um **obrigatório que o bot não consegue coletar** (ex.: anexo), o `discover` e o
+`/goalfy status` avisam.
 
 ### 4.4 Configurar e subir
 
@@ -310,12 +360,15 @@ src/
   goalfy/
     client.ts           chamadas REST (auth, timeout, retry em 429/5xx sem repetir POST)
     types.ts            normalização das respostas → tipos do bot (Card, Phase, Comment…)
-    board.ts            fases e formulário do board (cache de 5 min), busca paginada
-    cards.ts            criar e mover cards
+    board.ts            fases e formulários do board (cache de 5 min), busca paginada
+    formPlan.ts         como coletar cada campo no Discord (selects, modal, limites) e regras de fase
+    cards.ts            criar card, gravar campos de fase e mover
   discord/
     ui.ts               embeds, botões, selects, modais e a tabela de customIds (IDS)
     triage.ts           painel da triagem, criação de card em 2 passos, status do tópico
     commands.ts         definição dos slash commands + handlers + autocomplete
+    move.ts             mover card pedindo os campos obrigatórios de fase
+    setup.ts            diagnóstico do servidor e registro automático dos comandos
     topics.ts           tags de status/fase do tópico, permissão da triagem
     sync.ts             sincronização Goalfy → Discord e lembrete de tópicos parados
   scripts/
@@ -365,7 +418,9 @@ O token age como o usuário que o gerou (ver [4.3](#43-preparar-a-goalfy)).
 | Uso | Endpoint |
 | --- | --- |
 | Fases do board | `GET /phases/board/{boardId}` |
-| Formulários e campos do board | `GET /boards/{boardId}/fields` |
+| Formulários do board (acha o Formulário Inicial) | `GET /boards/{boardId}/fields` |
+| Formulário completo (obrigatórios, opções, ajuda) | `GET /models/{modelId}` |
+| Gravar campo da fase atual | `POST /forms/{formId}/field/` `{ fieldInfoId, value, cardId }`, `PUT /forms/field/{fieldId}` `{ value }` |
 | Buscar/listar cards | `GET /cards/board/{boardId}/filter?limit&offset&search` |
 | Cards de uma fase | `GET /cards/phase/{phaseId}` |
 | Ler card | `GET /cards/{id}` |
@@ -388,6 +443,9 @@ saber delas caso você use a API em outro lugar:
 | Formato dos campos | `[{ phaseId, phaseName, fields: [{ fieldInfoId, name, type }] }]` | `[{ id, name, fields: [{ id, title, fieldType, options }] }]`. O **1º item é o "Formulário Inicial"**, cujo `id` é o `modelId` de criação de cards |
 | Formulário de criação | não explica qual `modelId` usar | É o **Formulário Inicial do board**, e não o formulário da 1ª fase |
 | Fase final | não documentado | Fases têm o flag `done: true` |
+| Obrigatórios do formulário | — | `/boards/{id}/fields` não traz; use `GET /models/{modelId}` (`required`, `helpText`, `options`). Lá o rótulo fica em `title` (`name` é um id interno como `fieldTítulo`) |
+| Campos por fase do card | — | `GET /cards/{id}` → `phasesHistory[]` com `{ phase, form: { id, fields: [{ id, infoId, value }] } }` |
+| Obrigatórios ao mover | — | A regra "preencher os obrigatórios da fase atual antes de avançar" existe no backend, mas está **comentada** (`MoveCardToPhaseImpl`): a API não barra. O bot aplica a regra por conta própria |
 | Fase do card nas listagens | `"phase": "Em andamento"` | Só `phaseId`. O nome vem de `/phases/board` |
 | Tags do card | — | `{ id, text, color }` (o nome fica em `text`) |
 | Total da busca | — | `{ cards: [...], cardsCount: <total> }` |
@@ -421,9 +479,10 @@ permissões). Para isso, use um servidor de teste (seção 4).
 ## 8. Deploy
 
 ```bash
-docker build -t goalfy-discord-bot .
-docker run -d --name goalfy-bot --restart unless-stopped \
-  --env-file .env -v goalfy-bot-data:/app/data -p 3000:3000 goalfy-discord-bot
+docker compose up -d --build                     # só o bot (polling)
+docker compose --profile webhook up -d --build   # bot + Caddy com HTTPS automático para o webhook
+docker compose run --rm bot node dist/scripts/deploy-commands.js
+docker compose logs -f bot
 ```
 
 - **Uma réplica só** (ver 2.2). Em Kubernetes, use `replicas: 1` e estratégia `Recreate`.

@@ -10,7 +10,7 @@ describe('Store', () => {
     s.openTopic('t3', 'u3', 'Pendente');
 
     s.setStatus('t1', 'card', true);
-    s.classify('t1', { front: 'Sustentação', type: 'Bug', origin: 'Suporte', severity: 'S2 — Alto' });
+    s.classify('t1', { Tipo: 'Bug', Origem: 'Suporte', 'Prioridade especial': 'Major' });
     s.link({ threadId: 't1', cardId: 'c1', channelId: 'f', createdBy: 'u1', phaseId: null, phaseName: null });
     s.setStatus('t2', 'resolved', true);
     s.setStatus('t3', 'waiting', false);
@@ -21,7 +21,7 @@ describe('Store', () => {
     assert.equal(r.cards, 1);
     assert.equal(r.resolvedInTriage, 1);
     assert.equal(r.pending, 1);
-    assert.deepEqual(r.byFront, { Sustentação: 1 });
+    assert.deepEqual(r.byField, { Tipo: { Bug: 1 }, Origem: { Suporte: 1 }, 'Prioridade especial': { Major: 1 } });
   });
 
   it('só devolve comentários ainda não vistos', () => {

@@ -41,7 +41,13 @@ async function replaceTagGroup(thread: AnyThreadChannel, group: Set<string>, tar
   await thread.setAppliedTags(tags).catch((e) => logger.warn(`Não consegui trocar as tags do tópico ${thread.id}`, e));
 }
 
-const STATUS_TAGS = new Set(Object.values(TOPIC_STATUS).map((s) => normalize(s.tag)));
+/** Nome da tag do fórum para cada status (DISCORD_STATUS_TAGS). `undefined` = status sem tag. */
+export function statusTagNames(ctx: BotContext): Record<TopicStatus, string | undefined> {
+  return (
+    ctx.config.DISCORD_STATUS_TAGS ??
+    (Object.fromEntries(Object.entries(TOPIC_STATUS).map(([k, v]) => [k, v.tag])) as Record<TopicStatus, string>)
+  );
+}
 
 /** Atualiza o status do tópico (seção 14): banco + tag do fórum. */
 export async function setTopicStatus(ctx: BotContext, thread: AnyThreadChannel, status: TopicStatus) {
@@ -49,7 +55,12 @@ export async function setTopicStatus(ctx: BotContext, thread: AnyThreadChannel, 
     ctx.store.openTopic(thread.id, thread.ownerId ?? '', thread.name);
     ctx.store.setStatus(thread.id, status, DESTINATION_STATUSES.has(status));
   }
-  await replaceTagGroup(thread, STATUS_TAGS, TOPIC_STATUS[status].tag);
+  // Só as tags mapeadas para status formam o grupo: tags do solicitante (Major, Regressão…) ficam intactas.
+  // Status sem tag mapeada não mexe nas tags: o fórum pode exigir tag, e remover a atual deixaria o tópico sem nenhuma.
+  const names = statusTagNames(ctx);
+  if (!names[status]) return;
+  const group = new Set(Object.values(names).filter((n): n is string => !!n).map(normalize));
+  await replaceTagGroup(thread, group, names[status]);
 }
 
 /** Opcional: se o fórum tiver tags com o nome das fases do board, espelha a fase atual. */

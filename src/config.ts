@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { TOPIC_STATUS, type TopicStatus } from './process.js';
 
 try {
   process.loadEnvFile();
@@ -20,6 +21,30 @@ const optional = z
   .string()
   .optional()
   .transform((s) => (s?.trim() ? s.trim() : undefined));
+
+/**
+ * Nome da tag do fórum para cada status do tópico, no formato
+ * `triage=Pendente;waiting=;card=Card Criado;resolved=Resolvido;rejected=Não Procede`.
+ * Status omitido usa o nome padrão; status com valor vazio não aplica tag.
+ */
+const statusTags = z
+  .string()
+  .optional()
+  .transform((s, ctx) => {
+    const tags: Record<TopicStatus, string | undefined> = Object.fromEntries(
+      Object.entries(TOPIC_STATUS).map(([k, v]) => [k, v.tag]),
+    ) as Record<TopicStatus, string>;
+    for (const pair of (s ?? '').split(';').map((p) => p.trim()).filter(Boolean)) {
+      const [key = '', ...rest] = pair.split('=');
+      const status = key.trim() as TopicStatus;
+      if (!(status in TOPIC_STATUS)) {
+        ctx.addIssue({ code: 'custom', message: `status "${key.trim()}" desconhecido; use ${Object.keys(TOPIC_STATUS).join(', ')}` });
+        continue;
+      }
+      tags[status] = rest.join('=').trim() || undefined;
+    }
+    return tags;
+  });
 
 const goalfySchema = z.object({
   GOALFY_TOKEN: z.string().min(1, 'GOALFY_TOKEN é obrigatório'),
@@ -59,6 +84,7 @@ const botSchema = goalfySchema.extend({
   DISCORD_FORUM_CHANNEL_IDS: snowflakes('DISCORD_FORUM_CHANNEL_IDS'),
   DISCORD_TRIAGE_ROLE_IDS: snowflakes('DISCORD_TRIAGE_ROLE_IDS'),
   DISCORD_TRIAGE_CHANNEL_ID: optional.refine((v) => v === undefined || SNOWFLAKE.test(v), 'DISCORD_TRIAGE_CHANNEL_ID deve ser um ID numérico'),
+  DISCORD_STATUS_TAGS: statusTags,
   STALE_TOPIC_HOURS: z.coerce.number().min(0).default(24),
   GOALFY_BOARD_ID: z.string().min(1, 'GOALFY_BOARD_ID é obrigatório'),
   SYNC_INTERVAL_SECONDS: z.coerce.number().int().min(30).default(120),

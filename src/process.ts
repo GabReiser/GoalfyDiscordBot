@@ -51,6 +51,15 @@ export const SEVERITIES: Choice[] = [
 
 export const typeFront = (type: string | undefined): Front | undefined => TYPES.find((t) => t.value === type)?.front;
 
+/**
+ * Tags do fórum que o solicitante escolhe ao abrir o tópico → severidade pré-selecionada
+ * na classificação (a triagem pode mudar). Chave comparada sem acento/caixa/emoji.
+ */
+export const SEVERITY_TAGS: Record<string, string> = {
+  major: 'S1 — Crítico',
+  'atencao especial': 'S3 — Médio',
+};
+
 // ── Status do tópico no Discord (seção 14) ──────────────────────────────────
 
 export const TOPIC_STATUS = {
@@ -67,6 +76,9 @@ export type TopicStatus = keyof typeof TOPIC_STATUS;
 export const DESTINATION_STATUSES: ReadonlySet<TopicStatus> = new Set(['card', 'resolved', 'rejected']);
 
 // ── Goalfy ──────────────────────────────────────────────────────────────────
+
+/** Fase final que significa "não será feito" (o tópico vira ❌, não ✅). */
+export const CANCEL_PHASE_PATTERN = /cancel|arquiv|descart|reprovad/i;
 
 /** Nomes que indicam fase final quando GOALFY_DONE_PHASES não está definido. */
 export const DONE_PHASE_PATTERN = /^(?:.*\s)?(produ[cç][aã]o|conclu[ií]do|finalizado|resolvido|done|cancelado|encerrado)$/i;

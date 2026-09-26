@@ -81,9 +81,12 @@ export function toPhases(raw: unknown): Phase[] {
 export interface FormField {
   fieldInfoId: string;
   name: string;
+  /** `fieldType` da Goalfy em minúsculas: shorttext, longtext, singleselect, checkbox, date… */
   type: string;
   required: boolean;
   options: string[];
+  index: number;
+  helpText?: string;
 }
 
 export interface PhaseFields {
@@ -93,19 +96,48 @@ export interface PhaseFields {
 }
 
 function toField(raw: unknown): FormField | undefined {
-  if (!isObj(raw)) return undefined;
+  if (!isObj(raw) || raw.deactivated === true || raw.deleted === true) return undefined;
   const fieldInfoId = pick(raw, 'fieldInfoId', 'id');
   if (!fieldInfoId) return undefined;
   const rawOptions = unwrapList(raw.options ?? raw.choices ?? raw.values);
   return {
     fieldInfoId,
-    name: pick(raw, 'name', 'label', 'title') ?? fieldInfoId,
+    // GET /models devolve `name` como id interno ("fieldTítulo"); o rótulo de exibição fica em `title`.
+    name: pick(raw, 'title', 'label', 'name') ?? fieldInfoId,
     type: (pick(raw, 'type', 'fieldType') ?? 'text').toLowerCase(),
     required: raw.required === true || raw.mandatory === true,
     options: rawOptions.map((o) => (isObj(o) ? pick(o, 'label', 'name', 'value', 'title') : str(o))).filter(
       (o): o is string => !!o,
     ),
+    index: typeof raw.index === 'number' ? raw.index : 0,
+    helpText: pick(raw, 'helpText', 'description'),
   };
+}
+
+export interface FormModel {
+  id: string;
+  name?: string;
+  fields: FormField[];
+}
+
+/** GET /models/{id}: formulário com `required`, `helpText` e opções de cada campo. */
+export function toFormModel(raw: unknown): FormModel | undefined {
+  if (!isObj(raw)) return undefined;
+  const src = isObj(raw.model) ? raw.model : raw;
+  const id = pick(src, 'id');
+  if (!id) return undefined;
+  const fields = unwrapList(src.fields)
+    .map(toField)
+    .filter((f): f is FormField => !!f)
+    .sort((a, b) => a.index - b.index);
+  return { id, name: pick(src, 'name'), fields };
+}
+
+/** Valor preenchido de verdade (não nulo, não vazio, lista não vazia). */
+export function isFilled(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (Array.isArray(value)) return value.length > 0;
+  return String(value).trim() !== '' && String(value).trim() !== '[]';
 }
 
 export function toPhaseFields(raw: unknown): PhaseFields[] {
@@ -134,6 +166,29 @@ export interface Card {
   dueDate?: string;
   createdAt?: string;
   updatedAt?: string;
+  /** Formulários já preenchidos por fase (`phasesHistory` do GET /cards/{id}). */
+  phaseForms: PhaseForm[];
+}
+
+export interface PhaseForm {
+  phaseId: string;
+  formId?: string;
+  fields: { id?: string; infoId: string; value: unknown }[];
+}
+
+function toPhaseForms(raw: unknown): PhaseForm[] {
+  return unwrapList(raw).flatMap((h) => {
+    if (!isObj(h) || !isObj(h.phase)) return [];
+    const phaseId = pick(h.phase, 'id');
+    if (!phaseId) return [];
+    const form = isObj(h.form) ? h.form : {};
+    const fields = unwrapList(form.fields).flatMap((f) => {
+      if (!isObj(f)) return [];
+      const infoId = pick(f, 'infoId', 'fieldInfoId');
+      return infoId ? [{ id: pick(f, 'id'), infoId, value: f.value }] : [];
+    });
+    return [{ phaseId, formId: pick(form, 'id'), fields }];
+  });
 }
 
 export function toCard(raw: unknown): Card | undefined {
@@ -161,6 +216,7 @@ export function toCard(raw: unknown): Card | undefined {
     dueDate: pick(src, 'dueDate'),
     createdAt: pick(src, 'createdAt'),
     updatedAt: pick(src, 'updatedAt'),
+    phaseForms: toPhaseForms(src.phasesHistory),
   };
 }
 

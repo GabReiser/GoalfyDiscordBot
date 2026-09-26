@@ -33,10 +33,8 @@ export interface Report {
   cards: number;
   pending: number;
   avgHoursToDestination: number | null;
-  byFront: Record<string, number>;
-  byType: Record<string, number>;
-  byOrigin: Record<string, number>;
-  bySeverity: Record<string, number>;
+  /** Contagem por campo de classificação (nome do campo na Goalfy → valor → quantidade). */
+  byField: Record<string, Record<string, number>>;
 }
 
 type Row = Record<string, string | number | null>;
@@ -115,6 +113,12 @@ export class Store {
         value TEXT NOT NULL
       );
     `);
+    this.migrate();
+  }
+
+  private migrate() {
+    const cols = (this.db.prepare('PRAGMA table_info(topics)').all() as Row[]).map((c) => String(c.name));
+    if (!cols.includes('classification')) this.db.exec('ALTER TABLE topics ADD COLUMN classification TEXT');
   }
 
   get(key: string): string | undefined {
@@ -196,10 +200,9 @@ export class Store {
       .run(status, isDestination ? 1 : 0, threadId);
   }
 
-  classify(threadId: string, c: { front: string; type: string; origin: string; severity?: string }) {
-    this.db
-      .prepare('UPDATE topics SET front = ?, type = ?, origin = ?, severity = ? WHERE thread_id = ?')
-      .run(c.front, c.type, c.origin, c.severity ?? null, threadId);
+  /** Classificação escolhida na criação do card (nome do campo → valor), para os indicadores. */
+  classify(threadId: string, classification: Record<string, string>) {
+    this.db.prepare('UPDATE topics SET classification = ? WHERE thread_id = ?').run(JSON.stringify(classification), threadId);
   }
 
   /** Tópicos sem destino (regra 8), mais antigos primeiro. */
@@ -235,14 +238,22 @@ export class Store {
   /** Indicadores da seção 18, para tópicos abertos desde `sinceIso`. */
   report(sinceIso: string): Report {
     const one = (sql: string) => (this.db.prepare(sql).get(sinceIso) as Row).n as number;
-    const group = (col: string) =>
-      Object.fromEntries(
-        (
-          this.db
-            .prepare(`SELECT ${col} AS k, COUNT(*) AS n FROM topics WHERE opened_at >= ? AND ${col} IS NOT NULL GROUP BY ${col} ORDER BY n DESC`)
-            .all(sinceIso) as Row[]
-        ).map((r) => [String(r.k), Number(r.n)]),
-      );
+    const byField: Report['byField'] = {};
+    const rows = this.db
+      .prepare('SELECT classification FROM topics WHERE opened_at >= ? AND classification IS NOT NULL')
+      .all(sinceIso) as Row[];
+    for (const r of rows) {
+      let c: Record<string, string>;
+      try {
+        c = JSON.parse(String(r.classification)) as Record<string, string>;
+      } catch {
+        continue;
+      }
+      for (const [field, value] of Object.entries(c)) {
+        const counts = (byField[field] ??= {});
+        counts[value] = (counts[value] ?? 0) + 1;
+      }
+    }
     const avg = this.db
       .prepare(
         `SELECT AVG((julianday(destination_at) - julianday(opened_at)) * 24) AS h
@@ -257,10 +268,7 @@ export class Store {
       cards: one('SELECT COUNT(*) AS n FROM topics WHERE opened_at >= ? AND thread_id IN (SELECT thread_id FROM card_links)'),
       pending: one('SELECT COUNT(*) AS n FROM topics WHERE opened_at >= ? AND destination_at IS NULL'),
       avgHoursToDestination: avg.h === null ? null : Number(avg.h),
-      byFront: group('front'),
-      byType: group('type'),
-      byOrigin: group('origin'),
-      bySeverity: group('severity'),
+      byField,
     };
   }
 }

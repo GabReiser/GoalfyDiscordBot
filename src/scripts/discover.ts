@@ -10,7 +10,8 @@
 import { loadGoalfyConfig } from '../config.js';
 import { BoardService } from '../goalfy/board.js';
 import { GoalfyClient } from '../goalfy/client.js';
-import { toCards, toPhaseFields, toPhases, unwrapList } from '../goalfy/types.js';
+import { planCreate } from '../goalfy/formPlan.js';
+import { type FormField, toCards, toPhaseFields, toPhases, unwrapList } from '../goalfy/types.js';
 
 const config = loadGoalfyConfig();
 const client = new GoalfyClient(config.GOALFY_API_URL, config.GOALFY_TOKEN);
@@ -46,10 +47,37 @@ for (const g of toPhaseFields(fieldsRaw)) {
 const board = new BoardService(client, { ...config, GOALFY_BOARD_ID: boardId });
 try {
   const form = await board.createForm();
-  console.log(`\nFormulário de criação: modelId=${form.modelId} (fase inicial: ${form.initialPhase.title})`);
-  console.log('Mapeamento detectado (sobrescreva no .env se estiver errado):\n');
-  for (const [k, f] of Object.entries(form.fields)) console.log(`  ${k.padEnd(15)} → ${f.name} (${f.fieldInfoId})`);
-  console.log('\nDone phases:', phases.filter((p) => board.isDone(p)).map((p) => p.title).join(', ') || '(nenhuma detectada — defina GOALFY_DONE_PHASES)');
+  const plan = planCreate(form);
+  const fmt = (f: FormField) => `${f.name}${f.required ? ' *' : ''}${f.options.length ? ` [${f.options.slice(0, 6).join(' | ')}${f.options.length > 6 ? ' …' : ''}]` : ''}`;
+
+  console.log(`\nFormulário de criação: modelId=${form.modelId} (o card nasce em: ${form.initialPhase.title})`);
+  console.log('\nO que o bot vai perguntar ao criar um card (* = obrigatório):');
+  console.log('  Passo 1 (selects):', plan.selects.length ? '' : '(nenhum)');
+  for (const f of plan.selects) console.log(`    • ${fmt(f)}`);
+  console.log(`  Passo 2 (modal):\n    • Título do card *${plan.titleField ? ` → também preenche "${plan.titleField.name}"` : ''}`);
+  for (const f of plan.modal) console.log(`    • ${fmt(f)}`);
+  if (plan.auto.length) console.log(`  Automático: ${plan.auto.map((f) => f.name).join(', ')}`);
+  if (plan.skipped.length) console.log(`  Não perguntado (opcional): ${plan.skipped.map((f) => f.name).join(', ')}`);
+  if (plan.missingRequired.length) {
+    console.log(`  ⚠️  OBRIGATÓRIOS QUE O BOT NÃO CONSEGUE PREENCHER: ${plan.missingRequired.map(fmt).join(', ')}`);
+  }
+
+  console.log('\nFases com campos obrigatórios (o bot pede antes de mover):');
+  let any = false;
+  for (const p of phases) {
+    const required = (await board.phaseFields(p).catch(() => [])).filter((f) => f.required);
+    if (!required.length) continue;
+    any = true;
+    const when = board.isDone(p) ? 'ao entrar (fase final)' : 'antes de avançar';
+    console.log(`  • ${p.title} (${when}): ${required.map(fmt).join(', ')}`);
+  }
+  if (!any) console.log('  (nenhuma)');
+
+  const done = phases.filter((p) => board.isDone(p));
+  console.log(
+    '\nFases finais:',
+    done.map((p) => `${p.title}${board.isCancel(p) ? ' (❌ cancelamento)' : ' (✅ entrega)'}`).join(', ') || '(nenhuma detectada: defina GOALFY_DONE_PHASES)',
+  );
 } catch (e) {
   console.error('\nNão consegui montar o formulário de criação:', (e as Error).message);
 }

@@ -9,10 +9,11 @@ import {
   type StringSelectMenuInteraction,
 } from 'discord.js';
 import type { BotContext } from '../context.js';
-import type { NewCardInput } from '../goalfy/cards.js';
-import type { Card } from '../goalfy/types.js';
+import { InvalidFieldValuesError } from '../goalfy/cards.js';
+import { type CreatePlan, matchOption, planCreate } from '../goalfy/formPlan.js';
+import type { Card, FormField } from '../goalfy/types.js';
 import { logger } from '../logger.js';
-import { choiceLabel, FRONTS, matchChoice, ORIGINS, SEVERITIES, TOPIC_STATUS, TYPES, typeFront } from '../process.js';
+import { FIELD_ALIASES, type LogicalField, normalize, SEVERITY_TAGS, TOPIC_STATUS, typeFront } from '../process.js';
 import { missingSections, parseTopic, type ParsedTopic, TEMPLATE_HINT } from '../topicTemplate.js';
 import { primeComments } from './sync.js';
 import { applyPhaseTag, closeThread, forumTagNames, isMonitoredForum, requireTriage, setTopicStatus } from './topics.js';
@@ -20,16 +21,17 @@ import {
   cardActions,
   cardEmbed,
   cardModal,
-  type Classification,
-  type ClassifyField,
   classifyMessage,
   COLORS,
   errorEmbed,
+  type FormValues,
   infoEmbed,
   linkModal,
   okEmbed,
+  readModalValues,
   rejectModal,
   resolveModal,
+  selectedOptions,
   triagePanel,
   truncate,
   waitingModal,
@@ -137,19 +139,84 @@ export async function onThreadMessage(ctx: BotContext, message: Message) {
 }
 
 // ── Criar card: passo 1 (classificação) ─────────────────────────────────────
+//
+// Os campos vêm do Formulário Inicial do board (planCreate): selects no passo 1,
+// textos no modal do passo 2. O rascunho fica em memória entre os passos.
 
-const DRAFT_TTL_MS = 30 * 60_000;
-const drafts = new Map<string, { c: Classification; at: number }>();
-const draftKey = (userId: string, channelId: string | null) => `${userId}:${channelId}`;
-
-function getDraft(userId: string, channelId: string | null): Classification | undefined {
-  const d = drafts.get(draftKey(userId, channelId));
-  return d && Date.now() - d.at < DRAFT_TTL_MS ? d.c : undefined;
+interface CreateDraft {
+  plan: CreatePlan;
+  values: FormValues;
+  /** Selects alterados pelo usuário (a sugestão automática não sobrescreve). */
+  touched: Set<string>;
+  title: string;
+  at: number;
 }
 
-function setDraft(userId: string, channelId: string | null, c: Classification) {
-  drafts.set(draftKey(userId, channelId), { c, at: Date.now() });
+const DRAFT_TTL_MS = 30 * 60_000;
+const drafts = new Map<string, CreateDraft>();
+const draftKey = (userId: string, channelId: string | null) => `${userId}:${channelId}`;
+
+function getDraft(userId: string, channelId: string | null): CreateDraft | undefined {
+  const d = drafts.get(draftKey(userId, channelId));
+  return d && Date.now() - d.at < DRAFT_TTL_MS ? d : undefined;
+}
+
+function saveDraft(userId: string, channelId: string | null, d: CreateDraft) {
+  drafts.set(draftKey(userId, channelId), { ...d, at: Date.now() });
   for (const [k, v] of drafts) if (Date.now() - v.at > DRAFT_TTL_MS) drafts.delete(k);
+}
+
+const hasAlias = (f: FormField, key: LogicalField) => {
+  const n = normalize(f.name);
+  return FIELD_ALIASES[key].some((a) => n === a || n.includes(a));
+};
+
+/** Frente sugerida pelo tipo (tabela de classificação do processo), se o usuário não escolheu outra. */
+function suggestFront(fields: FormField[], values: FormValues, touched: Set<string>) {
+  const typeField = fields.find((f) => hasAlias(f, 'type'));
+  const frontField = fields.find((f) => hasAlias(f, 'front'));
+  if (!typeField || !frontField || touched.has(frontField.fieldInfoId)) return;
+  const front = typeFront(values[typeField.fieldInfoId]?.[0]);
+  const option = front && matchOption(frontField, front);
+  if (option) values[frontField.fieldInfoId] = [option];
+}
+
+/**
+ * Pré-seleção a partir do tópico:
+ *  - tags do fórum com o mesmo nome de uma opção (ex.: "Major" → Prioridade especial, "Regressão" → Tipo);
+ *  - SEVERITY_TAGS (ex.: tag "Major" → "S1 — Crítico" num campo de severidade);
+ *  - "Origem: …" escrito no modelo de abertura.
+ */
+export function suggestSelects(fields: FormField[], tags: string[], parsed: ParsedTopic): FormValues {
+  const values: FormValues = {};
+  const normTags = tags.map(normalize);
+  const severityHints = normTags.map((t) => SEVERITY_TAGS[t]).filter((s): s is string => !!s);
+  for (const f of fields) {
+    const byTag = f.options.find((o) => normTags.includes(normalize(o)));
+    const fuzzy = [...severityHints, ...(hasAlias(f, 'origin') && parsed.origin ? [parsed.origin] : [])]
+      .map((h) => matchOption(f, h))
+      .find(Boolean);
+    const hit = byTag ?? fuzzy;
+    if (hit) values[f.fieldInfoId] = [hit];
+  }
+  suggestFront(fields, values, new Set());
+  return values;
+}
+
+/** Texto inicial dos campos do modal, tirado do tópico. */
+function suggestTexts(ctx: { description?: FormField }, fields: FormField[], topic: TopicContext): FormValues {
+  const values: FormValues = {};
+  const attachments = topic.message ? [...topic.message.attachments.values()].map((a) => `📎 ${a.name}: ${a.url}`) : [];
+  const ticket = topic.content.match(/https?:\/\/\S*(?:ticket|chamado|suporte|helpdesk|zendesk|freshdesk)\S*/i)?.[0];
+  for (const f of fields) {
+    let v: string | undefined;
+    if (f === ctx.description) v = [topic.content, ...attachments].filter(Boolean).join('\n\n');
+    else if (hasAlias(f, 'expectedResult')) v = topic.parsed.expected;
+    else if (hasAlias(f, 'client')) v = topic.parsed.client;
+    else if (hasAlias(f, 'ticketLink')) v = ticket;
+    if (v) values[f.fieldInfoId] = [v];
+  }
+  return values;
 }
 
 async function alreadyLinked(ctx: BotContext, interaction: ButtonInteraction | ChatInputCommandInteraction, thread?: AnyThreadChannel) {
@@ -162,55 +229,61 @@ async function alreadyLinked(ctx: BotContext, interaction: ButtonInteraction | C
   return true;
 }
 
+function planWarning(plan: CreatePlan): string | undefined {
+  if (!plan.missingRequired.length) return undefined;
+  return `O formulário tem obrigatórios que o bot não consegue preencher (${plan.missingRequired.map((f) => f.name).join(', ')}). A Goalfy pode recusar o card.`;
+}
+
 export async function startCardFlow(ctx: BotContext, interaction: ButtonInteraction | ChatInputCommandInteraction) {
   if (!(await requireTriage(ctx, interaction))) return;
   const thread = threadOf(interaction);
   if (await alreadyLinked(ctx, interaction, thread)) return;
 
-  const { parsed } = await topicContext(thread);
-  const tags = thread ? forumTagNames(thread) : [];
-  const type = tags.map((t) => matchChoice(TYPES, t)).find(Boolean)?.value;
-  const draft: Classification = {
-    type,
-    front: typeFront(type),
-    origin: matchChoice(ORIGINS, parsed.origin)?.value,
-  };
-  setDraft(interaction.user.id, interaction.channelId, draft);
-  await interaction.reply({ flags: MessageFlags.Ephemeral, ...classifyMessage(draft) });
-}
-
-export async function onClassifySelect(interaction: StringSelectMenuInteraction, field: ClassifyField) {
-  const c = { ...(getDraft(interaction.user.id, interaction.channelId) ?? {}) };
-  const value = interaction.values[0];
-  c[field] = value;
-  if (field === 'type') {
-    c.front = typeFront(value) ?? c.front;
-    if (!['Bug', 'Regressão'].includes(value ?? '') && !c.severity) c.severity = 'N/A';
+  // Ler formulário e tópico pode passar dos 3s: responde já e completa depois.
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  try {
+    const form = await ctx.board.createForm();
+    const plan = planCreate(form);
+    const topic = await topicContext(thread);
+    const values = {
+      ...suggestSelects(plan.selects, thread ? forumTagNames(thread) : [], topic.parsed),
+      ...suggestTexts({ description: form.fields.description }, plan.modal, topic),
+    };
+    saveDraft(interaction.user.id, interaction.channelId, { plan, values, touched: new Set(), title: thread?.name ?? '', at: Date.now() });
+    await interaction.editReply(classifyMessage(plan.selects, values, planWarning(plan)));
+  } catch (e) {
+    logger.error('Falha ao montar o formulário de criação', e);
+    await interaction.editReply({ embeds: [errorEmbed(e)] });
   }
-  setDraft(interaction.user.id, interaction.channelId, c);
-  await interaction.update(classifyMessage(c));
 }
 
-export async function onClassifyNext(ctx: BotContext, interaction: ButtonInteraction) {
-  const c = getDraft(interaction.user.id, interaction.channelId) ?? {};
-  const missing = [!c.type && 'Tipo', !c.front && 'Frente', !c.origin && 'Origem', !c.severity && 'Severidade'].filter(Boolean);
-  if (missing.length) {
-    await interaction.update(classifyMessage(c, `Falta escolher: ${missing.join(', ')}.`));
+export async function onClassifySelect(interaction: StringSelectMenuInteraction, fieldInfoId: string) {
+  const d = getDraft(interaction.user.id, interaction.channelId);
+  const field = d?.plan.selects.find((f) => f.fieldInfoId === fieldInfoId);
+  if (!d || !field) {
+    await interaction.update({ content: 'A classificação expirou. Clique em **Criar card** de novo.', embeds: [], components: [] });
     return;
   }
+  d.values[fieldInfoId] = selectedOptions(field, interaction.values);
+  d.touched.add(fieldInfoId);
+  suggestFront(d.plan.selects, d.values, d.touched);
+  saveDraft(interaction.user.id, interaction.channelId, d);
+  await interaction.update(classifyMessage(d.plan.selects, d.values, planWarning(d.plan)));
+}
 
-  const thread = threadOf(interaction);
-  const { parsed, content, message } = await topicContext(thread);
-  const attachments = message ? [...message.attachments.values()].map((a) => `📎 ${a.name}: ${a.url}`) : [];
-  await interaction.showModal(
-    cardModal({
-      title: thread?.name ?? '',
-      description: [content, ...attachments].filter(Boolean).join('\n\n'),
-      expectedResult: parsed.expected ?? '',
-      client: parsed.client ?? '',
-      ticketLink: content.match(/https?:\/\/\S*(?:ticket|chamado|suporte|helpdesk|zendesk|freshdesk)\S*/i)?.[0] ?? '',
-    }),
-  );
+export async function onClassifyNext(_ctx: BotContext, interaction: ButtonInteraction) {
+  // Tudo síncrono: o modal precisa ser a primeira resposta da interação.
+  const d = getDraft(interaction.user.id, interaction.channelId);
+  if (!d) {
+    await interaction.update({ content: 'A classificação expirou. Clique em **Criar card** de novo.', embeds: [], components: [] });
+    return;
+  }
+  const missing = d.plan.selects.filter((f) => f.required && !d.values[f.fieldInfoId]?.length).map((f) => f.name);
+  if (missing.length) {
+    await interaction.update(classifyMessage(d.plan.selects, d.values, `Falta escolher: ${missing.join(', ')}.`));
+    return;
+  }
+  await interaction.showModal(cardModal(d.title, d.plan.modal, d.values));
 }
 
 export async function onClassifyCancel(interaction: ButtonInteraction) {
@@ -223,7 +296,7 @@ export async function onClassifyCancel(interaction: ButtonInteraction) {
 async function announceLinkedCard(ctx: BotContext, thread: AnyThreadChannel, card: Card, userId: string, extra?: string) {
   const embed = cardEmbed(ctx.board, card, await ctx.board.phaseOf(card)).setDescription(
     [
-      `${TOPIC_STATUS.card.emoji} **Card criado** por <@${userId}> — a demanda está registrada na Goalfy.`,
+      `${TOPIC_STATUS.card.emoji} **Card criado** por <@${userId}>: a demanda está registrada na Goalfy.`,
       extra,
       '_Criar o card não significa prazo de entrega: a priorização é feita por Produto/Tecnologia._',
       'Mudanças de fase e comentários dos devs vão aparecer aqui.',
@@ -251,8 +324,8 @@ async function linkThread(ctx: BotContext, thread: AnyThreadChannel, card: Card,
 }
 
 export async function onCreateModal(ctx: BotContext, interaction: ModalSubmitInteraction) {
-  const c = getDraft(interaction.user.id, interaction.channelId);
-  if (!c?.type || !c.front || !c.origin) {
+  const d = getDraft(interaction.user.id, interaction.channelId);
+  if (!d) {
     await interaction.reply({ flags: MessageFlags.Ephemeral, content: 'A classificação expirou. Clique em **Criar card** de novo.' });
     return;
   }
@@ -262,45 +335,52 @@ export async function onCreateModal(ctx: BotContext, interaction: ModalSubmitInt
     return;
   }
 
+  // Guarda o que foi digitado: se algo for recusado, o modal reabre preenchido.
+  d.title = interaction.fields.getTextInputValue('title').trim();
+  Object.assign(d.values, readModalValues(interaction, d.plan.modal));
+  saveDraft(interaction.user.id, interaction.channelId, d);
+
   if (interaction.isFromMessage()) await interaction.update({ embeds: [infoEmbed('⏳ Criando card na Goalfy…')], components: [] });
   else await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const member = interaction.inCachedGuild() ? interaction.member : undefined;
   const ownerId = thread && (ctx.store.topic(thread.id)?.ownerId || thread.ownerId);
   const owner = ownerId ? await interaction.guild?.members.fetch(ownerId).catch(() => undefined) : undefined;
-  const input: NewCardInput = {
-    title: interaction.fields.getTextInputValue('title').trim(),
-    description: interaction.fields.getTextInputValue('description').trim(),
-    expectedResult: interaction.fields.getTextInputValue('expectedResult').trim() || undefined,
-    client: interaction.fields.getTextInputValue('client').trim() || undefined,
-    ticketLink: interaction.fields.getTextInputValue('ticketLink').trim() || undefined,
-    front: c.front,
-    type: c.type,
-    origin: c.origin,
-    severity: c.severity,
-    discordLink: thread?.url,
-    requester: owner?.displayName ?? member?.displayName ?? interaction.user.username,
-  };
 
   try {
-    const card = await ctx.cards.create(input);
+    const card = await ctx.cards.create({
+      title: d.title,
+      values: d.values,
+      requester: owner?.displayName ?? member?.displayName ?? interaction.user.username,
+      discordUrl: thread?.url,
+    });
     drafts.delete(draftKey(interaction.user.id, interaction.channelId));
-    const summary = `${choiceLabel(TYPES, c.type)} · ${choiceLabel(FRONTS, c.front)} · ${choiceLabel(ORIGINS, c.origin)}` +
-      (c.severity && c.severity !== 'N/A' ? ` · ${choiceLabel(SEVERITIES, c.severity)}` : '');
+
+    const classification = Object.fromEntries(
+      d.plan.selects.filter((f) => d.values[f.fieldInfoId]?.length).map((f) => [f.name, d.values[f.fieldInfoId]!.join(', ')]),
+    );
+    const summary = Object.entries(classification)
+      .map(([k, v]) => `**${k}:** ${v}`)
+      .join(' · ');
 
     if (thread) {
       await linkThread(ctx, thread, card, interaction.user.id);
-      ctx.store.classify(thread.id, { front: c.front, type: c.type, origin: c.origin, severity: c.severity });
+      ctx.store.classify(thread.id, classification);
       await announceLinkedCard(ctx, thread, card, interaction.user.id, summary);
       await interaction.editReply({ embeds: [okEmbed(`Card [#${card.id}](${ctx.board.cardUrl(card.id)}) criado e vinculado ao tópico.`)] });
     } else {
       await interaction.editReply({
-        embeds: [cardEmbed(ctx.board, card, await ctx.board.phaseOf(card)).setDescription(summary)],
+        embeds: [cardEmbed(ctx.board, card, await ctx.board.phaseOf(card)).setDescription(summary || null)],
         components: [cardActions(ctx.board, card.id)],
       });
     }
     logger.info(`Card #${card.id} criado por ${interaction.user.tag}${thread ? ` (tópico ${thread.id})` : ''}`);
   } catch (e) {
+    if (e instanceof InvalidFieldValuesError) {
+      // Volta para o passo 1 com o motivo; o modal reabre com o que já foi digitado.
+      await interaction.editReply(classifyMessage(d.plan.selects, d.values, e.problems.join(' ')));
+      return;
+    }
     logger.error('Falha ao criar card', e);
     await interaction.editReply({ embeds: [errorEmbed(e)], components: [] });
   }

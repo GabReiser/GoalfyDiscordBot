@@ -20,11 +20,13 @@ import {
   onWaitingModal,
   startCardFlow,
 } from './discord/triage.js';
-import { errorEmbed, type ClassifyField } from './discord/ui.js';
+import { onFillAndMove, onMoveModal } from './discord/move.js';
+import { errorEmbed } from './discord/ui.js';
 import { BoardService } from './goalfy/board.js';
 import { CardService } from './goalfy/cards.js';
 import { GoalfyClient } from './goalfy/client.js';
 import { logger } from './logger.js';
+import { prepareGuild } from './discord/setup.js';
 import { Store } from './store.js';
 import { startWebhookServer } from './webhook.js';
 
@@ -71,11 +73,12 @@ async function route(interaction: Interaction) {
       if (action === 'next') return onClassifyNext(ctx, interaction);
       if (action === 'cancel') return onClassifyCancel(interaction);
     }
+    if (scope === 'card' && action === 'fill') return onFillAndMove(interaction, arg[0]!);
     if (scope === 'card') return onCardButton(ctx, interaction, action, arg);
   }
 
   if (interaction.isStringSelectMenu()) {
-    if (scope === 'classify') return onClassifySelect(interaction, action as ClassifyField);
+    if (scope === 'classify') return onClassifySelect(interaction, action);
     if (scope === 'card') return onCardSelect(ctx, interaction, action, arg);
   }
 
@@ -85,6 +88,7 @@ async function route(interaction: Interaction) {
     if (action === 'waiting') return onWaitingModal(ctx, interaction);
     if (action === 'resolve') return onResolveModal(ctx, interaction);
     if (action === 'reject') return onRejectModal(ctx, interaction);
+    if (action === 'move') return onMoveModal(ctx, interaction, arg[0]!);
   }
 }
 
@@ -107,6 +111,13 @@ client.on(Events.MessageCreate, (message) => {
   onThreadMessage(ctx, message).catch((e) => logger.error('Erro no MessageCreate', e));
 });
 
+// Bot convidado com ele já rodando: registra os comandos e confere o servidor, sem precisar reiniciar.
+client.on(Events.GuildCreate, (guild) => {
+  if (guild.id !== config.DISCORD_GUILD_ID) return;
+  logger.info(`Bot adicionado ao servidor "${guild.name}"`);
+  prepareGuild(ctx).catch((e) => logger.error('Erro ao preparar o servidor', e));
+});
+
 client.on(Events.ThreadDelete, (thread) => {
   ctx.store.unlinkThread(thread.id);
   ctx.store.forgetTopic(thread.id);
@@ -120,11 +131,12 @@ client.once(Events.ClientReady, async (c) => {
   c.user.setActivity('o backlog na Goalfy', { type: ActivityType.Watching });
   try {
     const phases = await board.phases();
+    await board.createForm().catch((e) => logger.warn('Não consegui ler o Formulário Inicial do board', e));
     logger.info(`Board ${board.boardId}: ${phases.map((p) => p.title).join(' → ')}`);
   } catch (e) {
     logger.error('Não consegui ler as fases do board. Confira GOALFY_TOKEN e GOALFY_BOARD_ID.', e);
   }
-  if (!config.DISCORD_FORUM_CHANNEL_IDS.length) logger.warn('DISCORD_FORUM_CHANNEL_IDS vazio: nenhum fórum será monitorado.');
+  await prepareGuild(ctx);
   stopSync = startSync(ctx);
   webhookServer = await startWebhookServer(ctx).catch((e) => {
     logger.error('Falha ao iniciar o servidor de webhook', e);
