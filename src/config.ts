@@ -84,6 +84,7 @@ const botSchema = goalfySchema.extend({
   DISCORD_FORUM_CHANNEL_IDS: snowflakes('DISCORD_FORUM_CHANNEL_IDS'),
   DISCORD_TRIAGE_ROLE_IDS: snowflakes('DISCORD_TRIAGE_ROLE_IDS'),
   DISCORD_TRIAGE_CHANNEL_ID: optional.refine((v) => v === undefined || SNOWFLAKE.test(v), 'DISCORD_TRIAGE_CHANNEL_ID deve ser um ID numérico'),
+  DISCORD_LOG_CHANNEL_ID: optional.refine((v) => v === undefined || SNOWFLAKE.test(v), 'DISCORD_LOG_CHANNEL_ID deve ser um ID numérico'),
   DISCORD_STATUS_TAGS: statusTags,
   STALE_TOPIC_HOURS: z.coerce.number().min(0).default(24),
   GOALFY_BOARD_ID: z.string().min(1, 'GOALFY_BOARD_ID é obrigatório'),

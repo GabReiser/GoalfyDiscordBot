@@ -76,7 +76,23 @@ export async function checkDiscordSetup(ctx: BotContext): Promise<string[]> {
   if (cfg.DISCORD_TRIAGE_CHANNEL_ID) {
     const channel = await guild.channels.fetch(cfg.DISCORD_TRIAGE_CHANNEL_ID).catch(() => null);
     if (!channel?.isSendable() || !channel.permissionsFor(me)?.has(PermissionFlagsBits.SendMessages)) {
-      problems.push(`Não consigo escrever no canal de alertas ${cfg.DISCORD_TRIAGE_CHANNEL_ID}.`);
+      problems.push(`Não consigo escrever no canal de tópicos parados ${cfg.DISCORD_TRIAGE_CHANNEL_ID}.`);
+    }
+  }
+
+  if (cfg.DISCORD_LOG_CHANNEL_ID) {
+    const channel = await guild.channels.fetch(cfg.DISCORD_LOG_CHANNEL_ID).catch(() => null);
+    const perms = channel && 'permissionsFor' in channel ? channel.permissionsFor(me) : null;
+    const canPost =
+      channel?.isSendable() &&
+      perms?.has(PermissionFlagsBits.ViewChannel) &&
+      perms.has(PermissionFlagsBits.SendMessages) &&
+      perms.has(PermissionFlagsBits.EmbedLinks);
+    if (!canPost) {
+      problems.push(`Não consigo postar no canal de logs ${cfg.DISCORD_LOG_CHANNEL_ID} (preciso de ver canal, enviar mensagens e inserir links).`);
+    } else if ('permissionsFor' in channel && channel.permissionsFor(guild.roles.everyone)?.has(PermissionFlagsBits.ViewChannel)) {
+      // Os alertas trazem IDs de card, nomes e erros da Goalfy: o canal deve ser restrito.
+      problems.push(`O canal de logs #${'name' in channel ? channel.name : cfg.DISCORD_LOG_CHANNEL_ID} está visível para @everyone. Restrinja ao cargo de triagem.`);
     }
   }
   return problems;

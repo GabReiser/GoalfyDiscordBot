@@ -511,6 +511,18 @@ Não suba o perfil `webhook` (Caddy): ele disputaria as portas 80/443 com o ingr
 
 ---
 
+### Acompanhando o bot (logs e alertas)
+
+- **Alertas no Discord** (`DISCORD_LOG_CHANNEL_ID`): o bot posta no canal, a cada minuto, um resumo
+  dos avisos e erros (mensagens repetidas viram "×N"), além de "🟢 Bot iniciado" e "🔴 Bot desligando".
+  Deixe o canal visível só para a equipe (ex.: cargo de triagem); o `/goalfy status` avisa se ele
+  estiver aberto para `@everyone`.
+- **Tempo das interações**: cada clique/comando é medido (chegada do Discord até o bot e resposta do
+  bot). Com `LOG_LEVEL=debug` todos aparecem no log; acima de 1,5 s viram aviso (e alerta).
+- **Painel de logs**: em produção usamos o [Dozzle](https://dozzle.dev) (logs ao vivo, busca, filtro
+  por nível), com login próprio, mostrando só o container do bot e sem ações de parar/reiniciar.
+  Fica atrás do mesmo esquema do webhook (Cloudflare → Traefik → porta publicada só na bridge).
+
 ## 9. Problemas comuns
 
 | Sintoma | Causa provável |

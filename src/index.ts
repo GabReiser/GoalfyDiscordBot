@@ -26,6 +26,7 @@ import { BoardService } from './goalfy/board.js';
 import { CardService } from './goalfy/cards.js';
 import { GoalfyClient } from './goalfy/client.js';
 import { logger } from './logger.js';
+import { postLifecycle, startAlerts } from './discord/alerts.js';
 import { prepareGuild } from './discord/setup.js';
 import { Store } from './store.js';
 import { startWebhookServer } from './webhook.js';
@@ -134,10 +135,13 @@ client.on(Events.ThreadDelete, (thread) => {
 });
 
 let stopSync: (() => void) | undefined;
+let stopAlerts: (() => void) | undefined;
 let webhookServer: import('node:http').Server | undefined;
 
 client.once(Events.ClientReady, async (c) => {
   logger.info(`Conectado como ${c.user.tag}`);
+  // Primeiro, para que os avisos da inicialização (diagnóstico, Goalfy) também cheguem ao canal.
+  stopAlerts = startAlerts(ctx);
   c.user.setActivity('o backlog na Goalfy', { type: ActivityType.Watching });
   try {
     const phases = await board.phases();
@@ -164,12 +168,21 @@ client.once(Events.ClientReady, async (c) => {
     logger.error('Falha ao iniciar o servidor de webhook', e);
     return undefined;
   });
+
+  const phases = await board.phases().catch(() => []);
+  await postLifecycle(ctx, 'start', [
+    `Board: **${phases.length} fases** · acompanhando **${ctx.store.openLinks().length} card(s)**`,
+    `Webhook: ${webhookServer ? 'ligado (mudança de fase na hora)' : 'desligado (só polling)'} · sincronização a cada ${config.SYNC_INTERVAL_SECONDS}s`,
+    `Cargo de triagem: ${config.DISCORD_TRIAGE_ROLE_IDS.length ? config.DISCORD_TRIAGE_ROLE_IDS.map((r) => `<@&${r}>`).join(' ') : '_não configurado (todos podem)_'}`,
+  ]);
 });
 
 async function shutdown(signal: string) {
   logger.info(`${signal} recebido, encerrando…`);
   stopSync?.();
+  stopAlerts?.();
   webhookServer?.close();
+  await postLifecycle(ctx, 'stop', [`Motivo: ${signal === 'SIGTERM' ? 'reinício/deploy' : signal}`]);
   await client.destroy();
   process.exit(0);
 }

@@ -21,6 +21,8 @@ function ctxWith(opts: {
   perms?: bigint[];
   roleExists?: boolean;
   statusTags?: Record<string, string | undefined>;
+  /** Canal de logs configurado; "public" = visível para @everyone. */
+  logChannel?: 'restricted' | 'public';
 }) {
   const perms = new Set(opts.perms ?? ALL_PERMS);
   const permissionsFor = () => ({ has: (flag: bigint) => perms.has(flag) });
@@ -31,10 +33,17 @@ function ctxWith(opts: {
     permissionsFor,
   };
   const alerts = { isSendable: () => true, permissionsFor };
+  const everyone = { id: 'everyone' };
+  const logs = {
+    name: 'goalfy-bot-logs',
+    isSendable: () => true,
+    permissionsFor: (who: unknown) =>
+      who === everyone ? { has: (flag: bigint) => opts.logChannel === 'public' && flag === PermissionFlagsBits.ViewChannel } : permissionsFor(),
+  };
   const guild = {
     members: { me: {} },
-    roles: { cache: new Map(opts.roleExists === false ? [] : [['role1', {}]]) },
-    channels: { fetch: async (id: string) => ({ forum1: forum, alerts1: alerts })[id] ?? null },
+    roles: { cache: new Map(opts.roleExists === false ? [] : [['role1', {}]]), everyone },
+    channels: { fetch: async (id: string) => ({ forum1: forum, alerts1: alerts, logs1: logs })[id] ?? null },
   };
   return {
     client: { guilds: { cache: new Map(opts.inGuild === false ? [] : [['g1', guild]]) } },
@@ -45,6 +54,7 @@ function ctxWith(opts: {
       DISCORD_TRIAGE_ROLE_IDS: ['role1'],
       DISCORD_TRIAGE_CHANNEL_ID: 'alerts1',
       DISCORD_STATUS_TAGS: opts.statusTags,
+      DISCORD_LOG_CHANNEL_ID: opts.logChannel ? 'logs1' : undefined,
     },
   } as unknown as BotContext;
 }
@@ -84,6 +94,12 @@ describe('checkDiscordSetup', () => {
 
     const [p] = await checkDiscordSetup(ctxWith({ tags: forumTags, statusTags: { ...statusTags, card: 'Card Criado' } }));
     assert.match(p!, /faltam as tags "Card Criado" \(card\)/);
+  });
+
+  it('canal de logs restrito → ok; visível para @everyone → aviso', async () => {
+    assert.deepEqual(await checkDiscordSetup(ctxWith({ logChannel: 'restricted' })), []);
+    const [p] = await checkDiscordSetup(ctxWith({ logChannel: 'public' }));
+    assert.match(p!, /canal de logs #goalfy-bot-logs está visível para @everyone/);
   });
 
   it('cargo de triagem inexistente', async () => {
