@@ -93,6 +93,11 @@ async function route(interaction: Interaction) {
 }
 
 client.on(Events.InteractionCreate, async (interaction) => {
+  // Tempo de cada interação: "chegada" = do clique até o evento chegar ao bot (Discord/rede);
+  // "resposta" = do evento até o bot terminar de responder. Lento acima de 1,5s vira WARN.
+  const received = Date.now();
+  const arrival = received - interaction.createdTimestamp;
+  const name = 'customId' in interaction ? interaction.customId : interaction.isCommand() ? `/${interaction.commandName}` : interaction.type;
   try {
     await route(interaction);
   } catch (e) {
@@ -100,6 +105,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
       await interaction.reply({ flags: MessageFlags.Ephemeral, embeds: [errorEmbed(e)] }).catch(() => {});
     }
+  } finally {
+    const handling = Date.now() - received;
+    const line = `Interação ${String(name).slice(0, 40)}: chegada ${arrival}ms, resposta ${handling}ms (gateway ${client.ws.ping}ms)`;
+    if (arrival + handling > 1500) logger.warn(`${line}: LENTA`);
+    else logger.debug(line);
   }
 });
 
