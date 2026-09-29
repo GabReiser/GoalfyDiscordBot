@@ -55,12 +55,17 @@ export class BoardService {
     return this.config.GOALFY_BOARD_ID;
   }
 
+  private get appUrl() {
+    return this.config.GOALFY_APP_URL.replace(/\/+$/, '');
+  }
+
+  /** Rota do front: /board/:boardId/:subRoute?/:editId? → abre o card sobre o board. */
   cardUrl(cardId: string) {
-    return `${this.config.GOALFY_APP_URL}/card/${cardId}`;
+    return `${this.appUrl}/board/${this.boardId}/cards/${cardId}`;
   }
 
   boardUrl() {
-    return `${this.config.GOALFY_APP_URL}/boards/${this.boardId}`;
+    return `${this.appUrl}/board/${this.boardId}`;
   }
 
   invalidate() {

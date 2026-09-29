@@ -398,7 +398,8 @@ export async function onCreateModal(ctx: BotContext, interaction: ModalSubmitInt
 /** Aceita "123", "#123" ou a URL do card. */
 export function parseCardRef(ref: string): string | undefined {
   const s = ref.trim();
-  return s.match(/\/card\/([\w-]+)/)?.[1] ?? s.match(/^#?([\w-]+)$/)?.[1];
+  // Aceita o link do front (/board/{board}/cards/{card}), o formato antigo (/card/{card}), "#id" ou o id.
+  return s.match(/\/cards?\/([\w-]+)/)?.[1] ?? s.match(/^#?([\w-]+)$/)?.[1];
 }
 
 export async function linkExistingCard(ctx: BotContext, thread: AnyThreadChannel, ref: string, userId: string): Promise<string> {

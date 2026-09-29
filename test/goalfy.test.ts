@@ -4,6 +4,7 @@
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { parseCardRef } from '../src/discord/triage.js';
 import { BoardService } from '../src/goalfy/board.js';
 import { CardService } from '../src/goalfy/cards.js';
 import type { GoalfyClient } from '../src/goalfy/client.js';
@@ -104,6 +105,22 @@ describe('BoardService', () => {
     const form = await boardFor(client).createForm();
     assert.equal(form.fields.requester, undefined);
     assert.ok(form.allFields.some((f) => f.fieldInfoId === 'f-email'), 'continua no formulário como campo comum');
+  });
+
+  it('links do front: card abre sobre o board (/board/:boardId/cards/:cardId)', () => {
+    const { client } = fakeGoalfy();
+    const board = boardFor(client, { GOALFY_APP_URL: 'https://app.goalfy.com.br/' });
+    assert.equal(board.cardUrl('c1'), 'https://app.goalfy.com.br/board/B1/cards/c1');
+    assert.equal(board.boardUrl(), 'https://app.goalfy.com.br/board/B1');
+  });
+
+  it('vincular aceita o link copiado do front, o formato antigo e o id', () => {
+    const id = '86a8d638-2f2a-420f-b6d3-8af5c219f691';
+    assert.equal(parseCardRef(`https://app.goalfy.com.br/board/a612783e-8b39-48f2-a3c6-612b001b9822/cards/${id}`), id);
+    assert.equal(parseCardRef(`https://app.goalfy.com.br/card/${id}`), id);
+    assert.equal(parseCardRef(`#${id}`), id);
+    assert.equal(parseCardRef(id), id);
+    assert.equal(parseCardRef('https://app.goalfy.com.br/board/a612783e'), undefined, 'link de board não é card');
   });
 
   it('ignora fases arquivadas e usa a flag `done`', async () => {

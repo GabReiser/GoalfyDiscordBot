@@ -326,7 +326,7 @@ export function linkModal() {
     .addLabelComponents(
       label(
         'ID ou link do card',
-        text('card', TextInputStyle.Short, { max: 200, required: true, placeholder: 'https://app.goalfy.com.br/card/12345' }),
+        text('card', TextInputStyle.Short, { max: 200, required: true, placeholder: 'https://app.goalfy.com.br/board/…/cards/…' }),
         'Use quando a ocorrência já tem card (duplicidade)',
       ),
     );
