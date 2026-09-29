@@ -2,6 +2,7 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  DiscordAPIError,
   EmbedBuilder,
   LabelBuilder,
   ModalBuilder,
@@ -64,6 +65,9 @@ const parseDate = parseApiDate;
 
 export function errorText(e: unknown): string {
   if (e instanceof GoalfyError) return e.friendly;
+  if (e instanceof DiscordAPIError && e.code === 50035) {
+    return 'O Discord recusou o formulário montado pelo bot. Tente de novo; se continuar, avise quem mantém o bot (o detalhe fica no log).';
+  }
   if (e instanceof Error) return e.message;
   return 'Erro inesperado.';
 }
@@ -236,9 +240,19 @@ export function classifyMessage(fields: FormField[], values: FormValues, error?:
   };
 }
 
+/**
+ * Valor inicial aceito pelo Discord: em campo de uma linha (Short), quebra de linha faz o modal
+ * inteiro ser recusado (COMPONENT_VALIDATION_FAILED), então vira espaço.
+ */
+export function inputValue(value: string, style: TextInputStyle, max: number): string {
+  const v = style === TextInputStyle.Short ? value.replace(/\s+/g, ' ').trim() : value.trim();
+  return truncate(v, max);
+}
+
 const text = (id: string, style: TextInputStyle, opts: { value?: string; max: number; required?: boolean; placeholder?: string }) => {
   const input = new TextInputBuilder().setCustomId(id).setStyle(style).setMaxLength(opts.max).setRequired(opts.required ?? false);
-  if (opts.value) input.setValue(truncate(opts.value, opts.max));
+  const value = opts.value && inputValue(opts.value, style, opts.max);
+  if (value) input.setValue(value);
   if (opts.placeholder) input.setPlaceholder(truncate(opts.placeholder, 100));
   return input;
 };

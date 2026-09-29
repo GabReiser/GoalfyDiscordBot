@@ -17,7 +17,10 @@ import { logger } from './logger.js';
  * O polling continua ativo (comentários não geram evento e ele cobre webhooks perdidos).
  */
 
-const HOOK_KEY = 'goalfy.hook.MOVE_CARD_TO';
+/** O hook é guardado por ambiente (API + board): trocar de ambiente não reaproveita o hook de outro. */
+const hookKey = (ctx: BotContext) => `goalfy.hook.MOVE_CARD_TO:${ctx.config.GOALFY_API_URL}:${ctx.board.boardId}`;
+const LEGACY_HOOK_KEY = 'goalfy.hook.MOVE_CARD_TO';
+const isLocalHost =(url: string) => /^https?:\/\/(localhost|127\.|0\.0\.0\.0|\[::1\])/i.test(url);
 const SECRET_KEY = 'goalfy.webhook.secret';
 const MAX_BODY = 1024 * 1024;
 
@@ -39,9 +42,11 @@ const safeEqual = (a: string, b: string) => {
 
 /** Registra (ou reaproveita) a assinatura do evento de mudança de fase no board. */
 async function ensureHook(ctx: BotContext, hookUrl: string) {
-  const stored = ctx.store.get(HOOK_KEY);
+  // Bancos antigos guardavam o hook numa chave única, sem ambiente: reaproveita para não duplicar o hook.
+  const stored = ctx.store.get(hookKey(ctx)) ?? ctx.store.get(LEGACY_HOOK_KEY);
   const previous = stored ? (JSON.parse(stored) as { id: string; url: string }) : undefined;
   if (previous?.url === hookUrl) {
+    ctx.store.set(hookKey(ctx), stored!);
     logger.info(`Webhook da Goalfy já registrado (hook ${previous.id})`);
     return;
   }
@@ -53,13 +58,18 @@ async function ensureHook(ctx: BotContext, hookUrl: string) {
   const inner = (raw?.hook ?? raw) as Record<string, unknown>;
   const id = inner?.id !== undefined ? String(inner.id) : undefined;
   if (!id) throw new Error('A Goalfy não retornou o ID do webhook criado.');
-  ctx.store.set(HOOK_KEY, JSON.stringify({ id, url: hookUrl }));
+  ctx.store.set(hookKey(ctx), JSON.stringify({ id, url: hookUrl }));
   logger.info(`Webhook da Goalfy registrado (hook ${id}) → ${hookUrl.replace(/[^/]+$/, '***')}`);
 }
 
 export async function startWebhookServer(ctx: BotContext): Promise<Server | undefined> {
   const base = ctx.config.WEBHOOK_PUBLIC_URL;
   if (!base) return undefined;
+  if (isLocalHost(base) && !isLocalHost(ctx.config.GOALFY_API_URL)) {
+    // A Goalfy remota (dev/prod) não alcança o localhost desta máquina: o hook nunca seria entregue.
+    logger.warn(`WEBHOOK_PUBLIC_URL (${base}) é local, mas a Goalfy (${ctx.config.GOALFY_API_URL}) é remota; webhook desligado, seguindo só com polling.`);
+    return undefined;
+  }
 
   const secret = secretFor(ctx);
   const path = `/goalfy/webhook/${secret}`;

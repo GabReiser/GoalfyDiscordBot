@@ -137,6 +137,18 @@ client.once(Events.ClientReady, async (c) => {
     logger.error('Não consegui ler as fases do board. Confira GOALFY_TOKEN e GOALFY_BOARD_ID.', e);
   }
   await prepareGuild(ctx);
+
+  // O banco guarda vínculos de UM ambiente da Goalfy. Trocar GOALFY_API_URL/board mantendo o banco
+  // faz o bot acompanhar cards que o ambiente novo não conhece (403 em loop).
+  const envId = `${config.GOALFY_API_URL}|${config.GOALFY_BOARD_ID}`;
+  const previousEnv = ctx.store.get('goalfy.env');
+  if (previousEnv && previousEnv !== envId && ctx.store.openLinks().length) {
+    logger.warn(
+      `O banco ${config.DATABASE_PATH} tem cards vinculados de outro ambiente (${previousEnv.split('|')[0]}). ` +
+        'Use um DATABASE_PATH por ambiente (ex.: data/dev.db); esses cards serão encerrados após falharem algumas vezes.',
+    );
+  }
+  ctx.store.set('goalfy.env', envId);
   stopSync = startSync(ctx);
   webhookServer = await startWebhookServer(ctx).catch((e) => {
     logger.error('Falha ao iniciar o servidor de webhook', e);

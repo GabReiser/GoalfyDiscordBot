@@ -204,15 +204,22 @@ export function suggestSelects(fields: FormField[], tags: string[], parsed: Pars
 }
 
 /** Texto inicial dos campos do modal, tirado do tópico. */
-function suggestTexts(ctx: { description?: FormField }, fields: FormField[], topic: TopicContext): FormValues {
+export function suggestTexts(
+  ctx: { description?: FormField },
+  fields: FormField[],
+  topic: Pick<TopicContext, 'content' | 'parsed' | 'message'>,
+): FormValues {
   const values: FormValues = {};
   const attachments = topic.message ? [...topic.message.attachments.values()].map((a) => `📎 ${a.name}: ${a.url}`) : [];
   const ticket = topic.content.match(/https?:\/\/\S*(?:ticket|chamado|suporte|helpdesk|zendesk|freshdesk)\S*/i)?.[0];
+  const email = topic.content.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/)?.[0];
+  const firstLine = (s: string | undefined) => s?.split(/\r?\n/).find((l) => l.trim())?.trim();
   for (const f of fields) {
     let v: string | undefined;
     if (f === ctx.description) v = [topic.content, ...attachments].filter(Boolean).join('\n\n');
+    else if (/email/.test(f.type) || normalize(f.name).includes('e mail')) v = email;
     else if (hasAlias(f, 'expectedResult')) v = topic.parsed.expected;
-    else if (hasAlias(f, 'client')) v = topic.parsed.client;
+    else if (hasAlias(f, 'client')) v = firstLine(topic.parsed.client);
     else if (hasAlias(f, 'ticketLink')) v = ticket;
     if (v) values[f.fieldInfoId] = [v];
   }

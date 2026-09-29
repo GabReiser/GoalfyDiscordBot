@@ -100,19 +100,36 @@ async function syncComments(ctx: BotContext, link: CardLink) {
   }
 }
 
+/** Falhas seguidas de acesso por card (403), antes de encerrar o acompanhamento. */
+const unreachable = new Map<string, number>();
+const MAX_UNREACHABLE = 3;
+
 async function syncLink(ctx: BotContext, link: CardLink, opts: { by?: string; comments?: boolean }) {
   let card;
   try {
     card = await ctx.cards.get(link.cardId);
   } catch (e) {
-    if (e instanceof GoalfyError && e.status === 404) {
+    // A Goalfy responde 403 "Card não encontrado ou você não possui acesso" também para card
+    // inexistente. Um 403 pode ser passageiro (permissão ajustada), então só desiste após algumas vezes.
+    if (e instanceof GoalfyError && (e.status === 404 || e.status === 403)) {
+      const failures = (unreachable.get(link.cardId) ?? 0) + 1;
+      unreachable.set(link.cardId, failures);
+      if (e.status === 403 && failures < MAX_UNREACHABLE) {
+        logger.warn(`Sem acesso ao card ${link.cardId} (403, tentativa ${failures}/${MAX_UNREACHABLE})`);
+        return;
+      }
+      unreachable.delete(link.cardId);
       ctx.store.updatePhase(link.cardId, link.phaseId, link.phaseName, true);
+      logger.warn(`Card ${link.cardId} inacessível (${e.status}); acompanhamento encerrado`);
       const thread = await fetchThread(ctx, link.threadId);
-      await thread?.send(`🗑️ O card #${link.cardId} foi excluído na Goalfy. Paro de acompanhar este tópico.`);
+      await thread?.send(
+        `🗑️ Não consigo mais acessar o card #${link.cardId} na Goalfy (foi excluído ou o bot perdeu o acesso). Paro de acompanhar este tópico.`,
+      );
       return;
     }
     throw e;
   }
+  unreachable.delete(link.cardId);
 
   const phase = await ctx.board.phaseOf(card);
   const changed = phase ? phase.id !== link.phaseId : !!card.phaseName && card.phaseName !== link.phaseName;
@@ -188,7 +205,9 @@ export function startSync(ctx: BotContext): () => void {
       const links = ctx.store.openLinks();
       logger.debug(`Sincronizando ${links.length} card(s)`);
       for (const link of links) {
-        await syncCard(ctx, link.cardId).catch((e) => logger.warn(`Falha ao sincronizar card ${link.cardId}`, e));
+        await syncCard(ctx, link.cardId).catch((e) =>
+          logger.warn(`Falha ao sincronizar card ${link.cardId}`, e instanceof GoalfyError ? e.message : e),
+        );
         await new Promise((r) => setTimeout(r, 300)); // gentil com a API
       }
       await remindStaleTopics(ctx).catch((e) => logger.warn('Falha ao lembrar tópicos parados', e));

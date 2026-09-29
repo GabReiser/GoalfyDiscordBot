@@ -7,7 +7,8 @@ import { describe, it } from 'node:test';
 import type { CreateForm } from '../src/goalfy/board.js';
 import { fieldKind, matchOption, planCreate, planMoveFields } from '../src/goalfy/formPlan.js';
 import type { FormField, Phase } from '../src/goalfy/types.js';
-import { suggestSelects } from '../src/discord/triage.js';
+import { suggestSelects, suggestTexts } from '../src/discord/triage.js';
+import { cardModal } from '../src/discord/ui.js';
 
 const field = (index: number, name: string, type: string, required: boolean, options: string[] = []): FormField => ({
   fieldInfoId: `f${index}`,
@@ -74,6 +75,35 @@ describe('pré-seleção a partir do tópico', () => {
 
   it('"Atenção Especial" casa com a opção de mesmo nome', () => {
     assert.deepEqual(suggestSelects([prioridade], ['🩹 Atenção Especial'], {}), { f4: ['Atenção Especial'] });
+  });
+});
+
+describe('modal aceito pelo Discord (bug de produção: COMPONENT_VALIDATION_FAILED)', () => {
+  const email = field(9, 'E-mail do solicitante', 'email', true);
+  const cliente = field(10, 'Qual cliente?', 'shorttext', false);
+  const topic = {
+    content: '**Cliente / Organização:** ACME Ltda\nfilial Curitiba\n**Origem:** Suporte\ncontato: joao.silva@acme.com.br',
+    parsed: { client: 'ACME Ltda\nfilial Curitiba', origin: 'Suporte' },
+    message: undefined,
+  };
+
+  it('cliente em várias linhas: usa só a primeira; e-mail vem do texto do tópico', () => {
+    const values = suggestTexts({ description: descricao }, [descricao, email, cliente], topic);
+    assert.deepEqual(values[cliente.fieldInfoId], ['ACME Ltda']);
+    assert.deepEqual(values[email.fieldInfoId], ['joao.silva@acme.com.br']);
+  });
+
+  it('campo de uma linha nunca recebe quebra de linha', () => {
+    const modal = cardModal('Título\ncom quebra', [descricao, email, cliente, figma], {
+      [cliente.fieldInfoId]: ['linha 1\nlinha 2\r\n  linha 3'],
+      [descricao.fieldInfoId]: ['parágrafo 1\n\nparágrafo 2'],
+    }).toJSON() as unknown as { components: { component: { style: number; value?: string } }[] };
+    for (const { component } of modal.components) {
+      if (component.style === 1 && component.value) assert.doesNotMatch(component.value, /\n/, component.value);
+    }
+    const values = modal.components.map((c) => c.component.value);
+    assert.ok(values.includes('linha 1 linha 2 linha 3'));
+    assert.ok(values.includes('parágrafo 1\n\nparágrafo 2'), 'parágrafo (longtext) mantém as quebras');
   });
 });
 
