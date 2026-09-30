@@ -39,9 +39,11 @@ export const IDS = {
   triageReject: 'triage:reject',
   // Classificação (passo 1 da criação)
   classify: (fieldInfoId: string) => `classify:${fieldInfoId}`,
+  classifyOpen: 'classify:open',
   classifyNext: 'classify:next',
   classifyCancel: 'classify:cancel',
   // Modais
+  classifyModal: 'modal:classify',
   createModal: 'modal:create',
   linkModal: 'modal:link',
   waitingModal: 'modal:waiting',
@@ -205,39 +207,38 @@ function fieldSelect(customId: string, f: FormField, selected: string[], inModal
 export const selectedOptions = (f: FormField, indexes: readonly string[]) =>
   indexes.map((i) => f.options[Number(i)]).filter((o): o is string => o !== undefined);
 
-/** Passo 1 da criação: um select por campo de seleção do Formulário Inicial. */
-export function classifyMessage(fields: FormField[], values: FormValues, error?: string) {
-  const help = fields
-    .filter((f) => f.helpText)
-    .map((f) => `• **${f.name}**: ${truncate(f.helpText!, 150)}`)
-    .join('\n');
+/**
+ * Mensagem entre os passos da criação. Só botões: os selects ficam nos modais, onde a escolha
+ * é local na tela da pessoa (em mensagem, cada select fazia o Discord travar o formulário).
+ *  - "open": formulário pronto (quando o modal não pôde abrir direto no clique)
+ *  - "classified": classificação escolhida, falta o passo 2
+ */
+export function draftMessage(fields: FormField[], values: FormValues, stage: 'open' | 'classified', note?: string) {
+  const chosen = fields
+    .filter((f) => values[f.fieldInfoId]?.length)
+    .map((f) => `**${f.name}:** ${values[f.fieldInfoId]!.join(', ')}`);
+  const description =
+    stage === 'open'
+      ? ['O formulário está pronto.', chosen.length ? `Já deduzido do tópico: ${chosen.join(' · ')}` : '']
+      : ['**Passo 1 de 2 concluído.**', chosen.join('\n') || '_Sem classificação_', '', 'Clique em **Continuar** para preencher a descrição e os demais campos.'];
   const embed = new EmbedBuilder()
-    .setColor(error ? COLORS.warn : COLORS.brand)
-    .setTitle('📋 Classificar a demanda')
+    .setColor(note ? COLORS.warn : COLORS.brand)
+    .setTitle('📋 Criar card')
     .setDescription(
-      [
-        fields.length
-          ? 'Passo 1 de 2: escolha as opções abaixo (as que já vieram marcadas foram deduzidas do tópico).'
-          : 'Passo 1 de 2: nada para classificar, clique em Continuar.',
-        '_A triagem classifica; Produto/Tecnologia prioriza._',
-        help,
-        error ? `\n⚠️ ${error}` : '',
-      ]
-        .filter(Boolean)
-        .join('\n'),
+      [...description, '_A triagem classifica; Produto/Tecnologia prioriza._', note ? `\n⚠️ ${note}` : '']
+        .filter((l) => l !== undefined && l !== null)
+        .join('\n')
+        .trim(),
     );
-  return {
-    embeds: [embed],
-    components: [
-      ...fields.map((f) =>
-        new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(fieldSelect(IDS.classify(f.fieldInfoId), f, values[f.fieldInfoId] ?? [])),
-      ),
-      new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder().setCustomId(IDS.classifyNext).setStyle(ButtonStyle.Success).setLabel('Continuar').setEmoji('➡️'),
-        new ButtonBuilder().setCustomId(IDS.classifyCancel).setStyle(ButtonStyle.Secondary).setLabel('Cancelar'),
-      ),
-    ],
-  };
+  const buttons =
+    stage === 'open'
+      ? [new ButtonBuilder().setCustomId(IDS.classifyOpen).setStyle(ButtonStyle.Success).setLabel('Preencher').setEmoji('📝')]
+      : [
+          new ButtonBuilder().setCustomId(IDS.classifyNext).setStyle(ButtonStyle.Success).setLabel('Continuar').setEmoji('➡️'),
+          new ButtonBuilder().setCustomId(IDS.classifyOpen).setStyle(ButtonStyle.Secondary).setLabel('Alterar classificação').setEmoji('✏️'),
+        ];
+  buttons.push(new ButtonBuilder().setCustomId(IDS.classifyCancel).setStyle(ButtonStyle.Secondary).setLabel('Cancelar'));
+  return { content: '', embeds: [embed], components: [new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons)] };
 }
 
 /**
@@ -283,15 +284,23 @@ export function fieldInput(f: FormField, value: string[] = []): LabelBuilder {
   );
 }
 
-/** Passo 2 da criação: título + campos de texto (e selects que não couberam no passo 1). */
-export function cardModal(title: string, fields: FormField[], values: FormValues) {
+/** Passo 1 da criação: título + campos de seleção (até 4), já pré-selecionados. */
+export function classifyModal(title: string, selects: FormField[], values: FormValues) {
+  return new ModalBuilder()
+    .setCustomId(IDS.classifyModal)
+    .setTitle('Criar card: passo 1 de 2')
+    .addLabelComponents(
+      label('Título do card *', text('title', TextInputStyle.Short, { value: title, max: 100, required: true })),
+      ...selects.map((f) => fieldInput(f, values[f.fieldInfoId])),
+    );
+}
+
+/** Passo 2 da criação: campos de texto (e selects que não couberam no passo 1). */
+export function cardModal(fields: FormField[], values: FormValues) {
   return new ModalBuilder()
     .setCustomId(IDS.createModal)
     .setTitle('Criar card: passo 2 de 2')
-    .addLabelComponents(
-      label('Título do card *', text('title', TextInputStyle.Short, { value: title, max: 100, required: true })),
-      ...fields.map((f) => fieldInput(f, values[f.fieldInfoId])),
-    );
+    .addLabelComponents(...fields.map((f) => fieldInput(f, values[f.fieldInfoId])));
 }
 
 /** Modal com os campos obrigatórios exigidos para mover o card. */

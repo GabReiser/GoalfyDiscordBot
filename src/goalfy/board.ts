@@ -44,6 +44,7 @@ const ROLE_TYPES: Partial<Record<LogicalField, RegExp>> = {
 export class BoardService {
   private phasesCache?: { at: number; value: Phase[] };
   private formCache?: { at: number; value: CreateForm };
+  private formRefresh?: Promise<unknown>;
   private modelCache = new Map<string, { at: number; value: FormField[] }>();
 
   constructor(
@@ -141,8 +142,23 @@ export class BoardService {
   }
 
   /** Formulário de criação: modelId + campos detectados (env tem prioridade sobre o nome). */
+  /**
+   * Formulário de criação. Com cache vencido, devolve o cache na hora e atualiza em segundo plano:
+   * o "Criar card" precisa abrir o modal em menos de 3s, então não pode esperar a Goalfy.
+   */
   async createForm(): Promise<CreateForm> {
-    if (this.formCache && Date.now() - this.formCache.at < CACHE_TTL_MS) return this.formCache.value;
+    if (this.formCache) {
+      if (Date.now() - this.formCache.at >= CACHE_TTL_MS && !this.formRefresh) {
+        this.formRefresh = this.loadCreateForm()
+          .catch((e) => logger.warn('Não consegui atualizar o formulário de criação; seguindo com o cache', e))
+          .finally(() => (this.formRefresh = undefined));
+      }
+      return this.formCache.value;
+    }
+    return this.loadCreateForm();
+  }
+
+  private async loadCreateForm(): Promise<CreateForm> {
 
     const phases = await this.phases();
     const initialPhase = phases[0];

@@ -294,8 +294,8 @@ async function handleGoalfy(ctx: BotContext, interaction: ChatInputCommandIntera
   const plan = planCreate(form);
   const name = (f: FormField) => `${f.name}${f.required ? ' *' : ''}`;
   const creation = [
-    `**Passo 1:** ${plan.selects.map(name).join(', ') || '—'}`,
-    `**Modal:** Título do card *${plan.modal.length ? `, ${plan.modal.map(name).join(', ')}` : ''}`,
+    `**Modal 1:** Título do card *${plan.selects.length ? `, ${plan.selects.map(name).join(', ')}` : ''}`,
+    `**Modal 2:** ${plan.modal.map(name).join(', ') || '— (cria direto após o modal 1)'}`,
     plan.auto.length ? `**Automático:** ${plan.auto.map((f) => f.name).join(', ')}` : '',
     plan.skipped.length ? `**Não perguntado:** ${plan.skipped.map((f) => f.name).join(', ')}` : '',
     plan.missingRequired.length ? `⚠️ **Obrigatórios que o bot não preenche:** ${plan.missingRequired.map((f) => f.name).join(', ')}` : '',

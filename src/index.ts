@@ -6,7 +6,9 @@ import { startSync } from './discord/sync.js';
 import {
   onClassifyCancel,
   onClassifyNext,
-  onClassifySelect,
+  onClassifyModal,
+  onClassifyOpen,
+  onLegacyClassifySelect,
   onCreateModal,
   onLinkButton,
   onLinkModal,
@@ -71,6 +73,7 @@ async function route(interaction: Interaction) {
       if (action === 'reject') return onRejectButton(ctx, interaction);
     }
     if (scope === 'classify') {
+      if (action === 'open') return onClassifyOpen(interaction);
       if (action === 'next') return onClassifyNext(ctx, interaction);
       if (action === 'cancel') return onClassifyCancel(interaction);
     }
@@ -79,11 +82,12 @@ async function route(interaction: Interaction) {
   }
 
   if (interaction.isStringSelectMenu()) {
-    if (scope === 'classify') return onClassifySelect(interaction, action);
+    if (scope === 'classify') return onLegacyClassifySelect(interaction);
     if (scope === 'card') return onCardSelect(ctx, interaction, action, arg);
   }
 
   if (interaction.isModalSubmit() && scope === 'modal') {
+    if (action === 'classify') return onClassifyModal(ctx, interaction);
     if (action === 'create') return onCreateModal(ctx, interaction);
     if (action === 'link') return onLinkModal(ctx, interaction);
     if (action === 'waiting') return onWaitingModal(ctx, interaction);

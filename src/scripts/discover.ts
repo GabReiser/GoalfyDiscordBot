@@ -52,9 +52,9 @@ try {
 
   console.log(`\nFormulário de criação: modelId=${form.modelId} (o card nasce em: ${form.initialPhase.title})`);
   console.log('\nO que o bot vai perguntar ao criar um card (* = obrigatório):');
-  console.log('  Passo 1 (selects):', plan.selects.length ? '' : '(nenhum)');
+  console.log(`  Modal 1:\n    • Título do card *${plan.titleField ? ` → também preenche "${plan.titleField.name}"` : ''}`);
   for (const f of plan.selects) console.log(`    • ${fmt(f)}`);
-  console.log(`  Passo 2 (modal):\n    • Título do card *${plan.titleField ? ` → também preenche "${plan.titleField.name}"` : ''}`);
+  console.log('  Modal 2:', plan.modal.length ? '' : '(nenhum: cria direto após o modal 1)');
   for (const f of plan.modal) console.log(`    • ${fmt(f)}`);
   if (plan.auto.length) console.log(`  Automático: ${plan.auto.map((f) => f.name).join(', ')}`);
   if (plan.skipped.length) console.log(`  Não perguntado (opcional): ${plan.skipped.map((f) => f.name).join(', ')}`);

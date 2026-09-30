@@ -21,7 +21,8 @@ import {
   cardActions,
   cardEmbed,
   cardModal,
-  classifyMessage,
+  classifyModal,
+  draftMessage,
   COLORS,
   errorEmbed,
   type FormValues,
@@ -31,7 +32,6 @@ import {
   readModalValues,
   rejectModal,
   resolveModal,
-  selectedOptions,
   triagePanel,
   truncate,
   waitingModal,
@@ -241,56 +241,98 @@ function planWarning(plan: CreatePlan): string | undefined {
   return `O formulário tem obrigatórios que o bot não consegue preencher (${plan.missingRequired.map((f) => f.name).join(', ')}). A Goalfy pode recusar o card.`;
 }
 
+/** Monta o rascunho: plano do formulário + sugestões tiradas do tópico. */
+async function prepareDraft(ctx: BotContext, thread: AnyThreadChannel | undefined): Promise<CreateDraft> {
+  const form = await ctx.board.createForm();
+  const plan = planCreate(form);
+  const topic = await topicContext(thread);
+  const values = {
+    ...suggestSelects(plan.selects, thread ? forumTagNames(thread) : [], topic.parsed),
+    ...suggestTexts({ description: form.fields.description }, plan.modal, topic),
+  };
+  return { plan, values, touched: new Set(), title: thread?.name ?? '', at: Date.now() };
+}
+
+/**
+ * Tempo máximo para preparar o rascunho e abrir o modal direto no clique. O Discord exige
+ * resposta em 3s; passando disso, o bot responde com o botão "Preencher" (fallback).
+ */
+const MODAL_BUDGET_MS = 2000;
+
+/**
+ * Criar card, em dois modais (seleções num modal ficam na tela da pessoa, sem ida e volta
+ * ao Discord a cada escolha — em mensagem, cada select travava o formulário):
+ *   1. título + selects (Origem, Tipo…), já pré-selecionados pelo tópico
+ *   2. campos de texto (Descrição, links…)
+ */
 export async function startCardFlow(ctx: BotContext, interaction: ButtonInteraction | ChatInputCommandInteraction) {
   if (!(await requireTriage(ctx, interaction))) return;
   const thread = threadOf(interaction);
   if (await alreadyLinked(ctx, interaction, thread)) return;
 
-  // Ler formulário e tópico pode passar dos 3s: responde já e completa depois.
+  const prep = prepareDraft(ctx, thread);
+  const ready = await Promise.race([
+    prep.then(
+      (d) => d,
+      () => null,
+    ),
+    new Promise<undefined>((r) => setTimeout(() => r(undefined), MODAL_BUDGET_MS)),
+  ]);
+  if (ready) {
+    saveDraft(interaction.user.id, interaction.channelId, ready);
+    await interaction.showModal(classifyModal(ready.title, ready.plan.selects, ready.values));
+    return;
+  }
+
+  // Lento (ou falhou): responde já e oferece o botão para abrir o formulário quando estiver pronto.
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   try {
-    const form = await ctx.board.createForm();
-    const plan = planCreate(form);
-    const topic = await topicContext(thread);
-    const values = {
-      ...suggestSelects(plan.selects, thread ? forumTagNames(thread) : [], topic.parsed),
-      ...suggestTexts({ description: form.fields.description }, plan.modal, topic),
-    };
-    saveDraft(interaction.user.id, interaction.channelId, { plan, values, touched: new Set(), title: thread?.name ?? '', at: Date.now() });
-    await interaction.editReply(classifyMessage(plan.selects, values, planWarning(plan)));
+    const d = await prep;
+    saveDraft(interaction.user.id, interaction.channelId, d);
+    await interaction.editReply(draftMessage(d.plan.selects, d.values, 'open', planWarning(d.plan)));
   } catch (e) {
     logger.error('Falha ao montar o formulário de criação', e);
     await interaction.editReply({ embeds: [errorEmbed(e)] });
   }
 }
 
-export async function onClassifySelect(interaction: StringSelectMenuInteraction, fieldInfoId: string) {
+const expired = { content: 'O formulário expirou. Clique em **Criar card** de novo.', embeds: [], components: [] };
+
+/** Botão "Preencher"/"Alterar classificação": reabre o modal 1 com o que já foi escolhido. */
+export async function onClassifyOpen(interaction: ButtonInteraction) {
   const d = getDraft(interaction.user.id, interaction.channelId);
-  const field = d?.plan.selects.find((f) => f.fieldInfoId === fieldInfoId);
-  if (!d || !field) {
-    await interaction.update({ content: 'A classificação expirou. Clique em **Criar card** de novo.', embeds: [], components: [] });
-    return;
-  }
-  d.values[fieldInfoId] = selectedOptions(field, interaction.values);
-  d.touched.add(fieldInfoId);
-  suggestFront(d.plan.selects, d.values, d.touched);
-  saveDraft(interaction.user.id, interaction.channelId, d);
-  await interaction.update(classifyMessage(d.plan.selects, d.values, planWarning(d.plan)));
+  if (!d) return void (await interaction.update(expired));
+  await interaction.showModal(classifyModal(d.title, d.plan.selects, d.values));
 }
 
-export async function onClassifyNext(_ctx: BotContext, interaction: ButtonInteraction) {
-  // Tudo síncrono: o modal precisa ser a primeira resposta da interação.
+/** Selects da versão antiga (mensagem efêmera): o fluxo agora é por modal. */
+export async function onLegacyClassifySelect(interaction: StringSelectMenuInteraction) {
+  await interaction.update(expired);
+}
+
+/** Envio do modal 1 (título + classificação). */
+export async function onClassifyModal(ctx: BotContext, interaction: ModalSubmitInteraction) {
   const d = getDraft(interaction.user.id, interaction.channelId);
-  if (!d) {
-    await interaction.update({ content: 'A classificação expirou. Clique em **Criar card** de novo.', embeds: [], components: [] });
-    return;
-  }
-  const missing = d.plan.selects.filter((f) => f.required && !d.values[f.fieldInfoId]?.length).map((f) => f.name);
-  if (missing.length) {
-    await interaction.update(classifyMessage(d.plan.selects, d.values, `Falta escolher: ${missing.join(', ')}.`));
-    return;
-  }
-  await interaction.showModal(cardModal(d.title, d.plan.modal, d.values));
+  if (!d) return void (await interaction.reply({ flags: MessageFlags.Ephemeral, ...expired }));
+
+  d.title = interaction.fields.getTextInputValue('title').trim();
+  Object.assign(d.values, readModalValues(interaction, d.plan.selects));
+  for (const f of d.plan.selects) d.touched.add(f.fieldInfoId);
+  saveDraft(interaction.user.id, interaction.channelId, d);
+
+  // Formulário sem campos de texto: não há passo 2, cria direto.
+  if (!d.plan.modal.length) return createFromDraft(ctx, interaction, d);
+
+  const message = draftMessage(d.plan.selects, d.values, 'classified', planWarning(d.plan));
+  if (interaction.isFromMessage()) await interaction.update(message);
+  else await interaction.reply({ flags: MessageFlags.Ephemeral, ...message });
+}
+
+/** Botão "Continuar": abre o modal 2 (textos), já com o que foi digitado antes, se houver. */
+export async function onClassifyNext(_ctx: BotContext, interaction: ButtonInteraction) {
+  const d = getDraft(interaction.user.id, interaction.channelId);
+  if (!d) return void (await interaction.update(expired));
+  await interaction.showModal(cardModal(d.plan.modal, d.values));
 }
 
 export async function onClassifyCancel(interaction: ButtonInteraction) {
@@ -330,22 +372,24 @@ async function linkThread(ctx: BotContext, thread: AnyThreadChannel, card: Card,
   await applyPhaseTag(ctx, thread, phase);
 }
 
+/** Envio do modal 2 (textos). */
 export async function onCreateModal(ctx: BotContext, interaction: ModalSubmitInteraction) {
   const d = getDraft(interaction.user.id, interaction.channelId);
-  if (!d) {
-    await interaction.reply({ flags: MessageFlags.Ephemeral, content: 'A classificação expirou. Clique em **Criar card** de novo.' });
-    return;
-  }
-  const thread = threadOf(interaction);
-  if (thread && ctx.store.byThread(thread.id)) {
-    await interaction.reply({ flags: MessageFlags.Ephemeral, content: 'Alguém já criou um card para este tópico. 🙂' });
-    return;
-  }
-
+  if (!d) return void (await interaction.reply({ flags: MessageFlags.Ephemeral, ...expired }));
   // Guarda o que foi digitado: se algo for recusado, o modal reabre preenchido.
-  d.title = interaction.fields.getTextInputValue('title').trim();
   Object.assign(d.values, readModalValues(interaction, d.plan.modal));
   saveDraft(interaction.user.id, interaction.channelId, d);
+  await createFromDraft(ctx, interaction, d);
+}
+
+async function createFromDraft(ctx: BotContext, interaction: ModalSubmitInteraction, d: CreateDraft) {
+  const thread = threadOf(interaction);
+  if (thread && ctx.store.byThread(thread.id)) {
+    const msg = { content: 'Alguém já criou um card para este tópico. 🙂', embeds: [], components: [] };
+    if (interaction.isFromMessage()) await interaction.update(msg);
+    else await interaction.reply({ flags: MessageFlags.Ephemeral, ...msg });
+    return;
+  }
 
   if (interaction.isFromMessage()) await interaction.update({ embeds: [infoEmbed('⏳ Criando card na Goalfy…')], components: [] });
   else await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -374,7 +418,10 @@ export async function onCreateModal(ctx: BotContext, interaction: ModalSubmitInt
       await linkThread(ctx, thread, card, interaction.user.id);
       ctx.store.classify(thread.id, classification);
       await announceLinkedCard(ctx, thread, card, interaction.user.id, summary);
-      await interaction.editReply({ embeds: [okEmbed(`Card [#${card.id}](${ctx.board.cardUrl(card.id)}) criado e vinculado ao tópico.`)] });
+      await interaction.editReply({
+        embeds: [okEmbed(`Card [#${card.id}](${ctx.board.cardUrl(card.id)}) criado e vinculado ao tópico.`)],
+        components: [],
+      });
     } else {
       await interaction.editReply({
         embeds: [cardEmbed(ctx.board, card, await ctx.board.phaseOf(card)).setDescription(summary || null)],
@@ -384,8 +431,8 @@ export async function onCreateModal(ctx: BotContext, interaction: ModalSubmitInt
     logger.info(`Card #${card.id} criado por ${interaction.user.tag}${thread ? ` (tópico ${thread.id})` : ''}`);
   } catch (e) {
     if (e instanceof InvalidFieldValuesError) {
-      // Volta para o passo 1 com o motivo; o modal reabre com o que já foi digitado.
-      await interaction.editReply(classifyMessage(d.plan.selects, d.values, e.problems.join(' ')));
+      // Mostra o motivo com os botões para corrigir; os modais reabrem com o que já foi preenchido.
+      await interaction.editReply(draftMessage(d.plan.selects, d.values, 'classified', e.problems.join(' ')));
       return;
     }
     logger.error('Falha ao criar card', e);

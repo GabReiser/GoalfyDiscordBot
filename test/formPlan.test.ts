@@ -8,7 +8,7 @@ import type { CreateForm } from '../src/goalfy/board.js';
 import { fieldKind, matchOption, planCreate, planMoveFields } from '../src/goalfy/formPlan.js';
 import type { FormField, Phase } from '../src/goalfy/types.js';
 import { suggestSelects, suggestTexts } from '../src/discord/triage.js';
-import { cardModal } from '../src/discord/ui.js';
+import { cardModal, classifyModal, draftMessage } from '../src/discord/ui.js';
 
 const field = (index: number, name: string, type: string, required: boolean, options: string[] = []): FormField => ({
   fieldInfoId: `f${index}`,
@@ -44,7 +44,7 @@ describe('planCreate com o Formulário Inicial do Backlog Produto', () => {
     assert.deepEqual(plan.selects.map((f) => f.name), ['Origem', 'Tipo', 'Módulo/Funcionalidade', 'Prioridade especial']);
   });
 
-  it('passo 2: descrição e links no modal (o título ocupa a 1ª vaga)', () => {
+  it('modal 2: descrição e links (o título fica no modal 1)', () => {
     assert.equal(plan.titleField, titulo);
     assert.deepEqual(plan.modal.map((f) => f.name), ['Descrição', 'Link do figma (dev)', 'Link RFC']);
   });
@@ -94,16 +94,46 @@ describe('modal aceito pelo Discord (bug de produção: COMPONENT_VALIDATION_FAI
   });
 
   it('campo de uma linha nunca recebe quebra de linha', () => {
-    const modal = cardModal('Título\ncom quebra', [descricao, email, cliente, figma], {
+    type ModalJson = { components: { component: { style: number; value?: string } }[] };
+    const modal1 = classifyModal('Título\ncom quebra', [], {}).toJSON() as unknown as ModalJson;
+    const modal2 = cardModal([descricao, email, cliente, figma], {
       [cliente.fieldInfoId]: ['linha 1\nlinha 2\r\n  linha 3'],
       [descricao.fieldInfoId]: ['parágrafo 1\n\nparágrafo 2'],
-    }).toJSON() as unknown as { components: { component: { style: number; value?: string } }[] };
-    for (const { component } of modal.components) {
+    }).toJSON() as unknown as ModalJson;
+    for (const { component } of [...modal1.components, ...modal2.components]) {
       if (component.style === 1 && component.value) assert.doesNotMatch(component.value, /\n/, component.value);
     }
-    const values = modal.components.map((c) => c.component.value);
+    assert.equal(modal1.components[0]!.component.value, 'Título com quebra');
+    const values = modal2.components.map((c) => c.component.value);
     assert.ok(values.includes('linha 1 linha 2 linha 3'));
     assert.ok(values.includes('parágrafo 1\n\nparágrafo 2'), 'parágrafo (longtext) mantém as quebras');
+  });
+});
+
+describe('fluxo em dois modais (Backlog Produto)', () => {
+  const plan = planCreate(backlogProduto);
+  const muitos = { ...modulo, options: Array.from({ length: 25 }, (_, i) => `Módulo ${i} ${'x'.repeat(i * 3)}`) };
+
+  it('modal 1: título + os 4 selects, com a pré-seleção marcada', () => {
+    const json = classifyModal('Erro ao salvar', [origem, tipo, muitos, prioridade], { [prioridade.fieldInfoId]: ['Major'] }).toJSON() as unknown as {
+      components: { component: { custom_id: string; options?: { label: string; default?: boolean }[] } }[];
+    };
+    assert.equal(json.components.length, 5, 'limite do Discord: 5 componentes por modal');
+    const prio = json.components[4]!.component.options!;
+    assert.deepEqual(prio.filter((o) => o.default).map((o) => o.label), ['Major']);
+  });
+
+  it('modal 2: até 5 campos (o Link RFC agora cabe)', () => {
+    const p = planCreate({ ...backlogProduto, allFields: [...backlogProduto.allFields, field(11, 'Qual cliente?', 'shorttext', false), field(12, 'E-mail', 'email', true)] });
+    assert.equal(p.modal.length, 5);
+    assert.ok(cardModal(p.modal, {}).toJSON());
+  });
+
+  it('mensagem entre os passos só tem botões (nada de select para o Discord travar)', () => {
+    const msg = draftMessage(plan.selects, { [origem.fieldInfoId]: ['Suporte'] }, 'classified');
+    const rows = msg.components.map((r) => r.toJSON()) as unknown as { components: { type: number }[] }[];
+    assert.ok(rows.every((r) => r.components.every((c) => c.type === 2)), 'só botões (type 2)');
+    assert.match(msg.embeds[0]!.toJSON().description!, /\*\*Origem:\*\* Suporte/);
   });
 });
 

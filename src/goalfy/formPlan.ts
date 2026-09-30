@@ -71,9 +71,9 @@ const byRequiredThenIndex = (a: FormField, b: FormField) => Number(b.required) -
 export interface CreatePlan {
   /** Campo "título" do formulário (se houver); o título do card é sempre pedido no modal. */
   titleField?: FormField;
-  /** Passo 1: selects na mensagem de classificação. */
+  /** Modal 1: selects (até 4; o título ocupa a 5ª vaga). */
   selects: FormField[];
-  /** Passo 2: campos do modal, além do título. */
+  /** Modal 2: campos de texto (e selects que não couberam no modal 1), até 5. */
   modal: FormField[];
   /** Preenchidos pelo bot, sem perguntar (link do tópico, solicitante). */
   auto: FormField[];
@@ -94,7 +94,7 @@ export function planCreate(form: CreateForm): CreatePlan {
   const overflowSelects = allSelects.slice(MAX_SELECTS_PER_MESSAGE);
   const texts = rest.filter((f) => fieldKind(f) === 'text' || fieldKind(f) === 'longtext');
 
-  // Ordem de prioridade para as 4 vagas do modal (a 1ª vaga é sempre o título).
+  // Ordem de prioridade para as 5 vagas do modal 2 (o título fica no modal 1).
   const description = form.fields.description && texts.includes(form.fields.description) ? [form.fields.description] : [];
   const candidates = [
     ...description,
@@ -103,7 +103,7 @@ export function planCreate(form: CreateForm): CreatePlan {
     ...texts.filter((f) => !f.required && !description.includes(f)),
     ...overflowSelects.filter((f) => !f.required),
   ];
-  const modal = [...new Set(candidates)].slice(0, MAX_MODAL_INPUTS - 1);
+  const modal = [...new Set(candidates)].slice(0, MAX_MODAL_INPUTS);
 
   const collected = new Set([...handled, ...selects, ...modal].map((f) => (typeof f === 'string' ? f : f.fieldInfoId)));
   const left = rest.filter((f) => !collected.has(f.fieldInfoId));
