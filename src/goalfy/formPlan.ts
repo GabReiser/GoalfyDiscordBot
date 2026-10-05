@@ -83,7 +83,10 @@ export interface CreatePlan {
   skipped: FormField[];
 }
 
-export function planCreate(form: CreateForm): CreatePlan {
+/** Campo "virtual" do responsável: não existe no formulário da Goalfy; vira addResponsible depois de criar. */
+export const RESPONSIBLE_FIELD_ID = '__responsible';
+
+export function planCreate(form: CreateForm, responsible?: FormField): CreatePlan {
   const auto = [form.fields.discordLink, form.fields.requester].filter((f): f is FormField => !!f);
   const titleField = form.fields.title;
   const handled = new Set([...auto, ...(titleField ? [titleField] : [])].map((f) => f.fieldInfoId));
@@ -100,6 +103,8 @@ export function planCreate(form: CreateForm): CreatePlan {
     ...description,
     ...texts.filter((f) => f.required && !description.includes(f)),
     ...overflowSelects.filter((f) => f.required),
+    // Opcional, mas mais útil na abertura do card do que links (figma/RFC), que surgem durante o dev.
+    ...(responsible ? [responsible] : []),
     ...texts.filter((f) => !f.required && !description.includes(f)),
     ...overflowSelects.filter((f) => !f.required),
   ];

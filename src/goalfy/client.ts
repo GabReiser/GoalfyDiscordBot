@@ -196,6 +196,19 @@ export class GoalfyClient {
     return this.request('DELETE', `/external/v1/boards/${enc(boardId)}/hook/${enc(hookId)}`);
   }
 
+  // ── Membros e responsáveis ────────────────────────────────────────────────
+  /** Membros de um contexto (board): `{ members: [{ id, name, email, role, status, isCurrentUser }], total }`. */
+  listMembers(contextId: string) {
+    return this.request('GET', `/members/${enc(contextId)}`);
+  }
+  /**
+   * Adiciona responsáveis ao card. `value`: IDs, e-mails ou usernames separados por vírgula;
+   * só entram membros do board (a API ignora quem não for).
+   */
+  addResponsible(cardId: string, value: string) {
+    return this.request('POST', `/external/v1/cards/${enc(cardId)}/addResponsible`, { value });
+  }
+
   // ── Comentários ───────────────────────────────────────────────────────────
   listComments(cardId: string) {
     return this.request('GET', `/cards/${enc(cardId)}/comments`);

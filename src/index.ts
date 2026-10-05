@@ -150,6 +150,7 @@ client.once(Events.ClientReady, async (c) => {
   try {
     const phases = await board.phases();
     await board.createForm().catch((e) => logger.warn('Não consegui ler o Formulário Inicial do board', e));
+    await board.members().catch((e) => logger.warn('Não consegui listar os membros do board', e));
     logger.info(`Board ${board.boardId}: ${phases.map((p) => p.title).join(' → ')}`);
   } catch (e) {
     logger.error('Não consegui ler as fases do board. Confira GOALFY_TOKEN e GOALFY_BOARD_ID.', e);

@@ -278,6 +278,34 @@ export function toComments(raw: unknown): Comment[] {
   });
 }
 
+// ── Membros ─────────────────────────────────────────────────────────────────
+
+export interface Member {
+  id: string;
+  name: string;
+  email?: string;
+  /** O usuário do próprio token (o bot): não faz sentido como responsável. */
+  isCurrentUser: boolean;
+  accepted: boolean;
+}
+
+export function toMembers(raw: unknown): Member[] {
+  return unwrapList(raw, 'members').flatMap((m) => {
+    if (!isObj(m)) return [];
+    const id = pick(m, 'id');
+    if (!id) return [];
+    return [
+      {
+        id,
+        name: pick(m, 'name', 'username', 'email') ?? id,
+        email: pick(m, 'email'),
+        isCurrentUser: m.isCurrentUser === true,
+        accepted: !m.status || m.status === 'ACCEPTED',
+      },
+    ];
+  });
+}
+
 /** Tenta achar o ID do card no retorno da criação. */
 export function extractCardId(raw: unknown): string | undefined {
   if (typeof raw === 'string' || typeof raw === 'number') return String(raw);

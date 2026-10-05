@@ -137,6 +137,11 @@ export class CardService {
     await this.client.moveCard(cardId, phase.id);
   }
 
+  /** Define o responsável do card (e-mail de um membro do board). */
+  addResponsible(cardId: string, email: string) {
+    return this.client.addResponsible(cardId, email);
+  }
+
   comment(cardId: string, text: string) {
     return this.client.addComment(cardId, `${BOT_COMMENT_PREFIX} ${text}`);
   }

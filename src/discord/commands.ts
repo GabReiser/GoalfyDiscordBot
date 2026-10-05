@@ -291,7 +291,8 @@ async function handleGoalfy(ctx: BotContext, interaction: ChatInputCommandIntera
   ctx.board.invalidate();
   const phases = await ctx.board.phases();
   const form = await ctx.board.createForm();
-  const plan = planCreate(form);
+  const responsible = await ctx.board.responsibleField().catch(() => undefined);
+  const plan = planCreate(form, responsible?.field);
   const name = (f: FormField) => `${f.name}${f.required ? ' *' : ''}`;
   const creation = [
     `**Modal 1:** Título do card *${plan.selects.length ? `, ${plan.selects.map(name).join(', ')}` : ''}`,

@@ -2,7 +2,8 @@ import type { GoalfyConfig } from '../config.js';
 import { logger } from '../logger.js';
 import { CANCEL_PHASE_PATTERN, DONE_PHASE_PATTERN, FIELD_ALIASES, type LogicalField, normalize } from '../process.js';
 import type { CardFilter, GoalfyClient } from './client.js';
-import { type Card, type FormField, type Phase, toCardPage, toFormModel, toPhaseFields, toPhases } from './types.js';
+import { RESPONSIBLE_FIELD_ID } from './formPlan.js';
+import { type Card, type FormField, type Member, type Phase, toCardPage, toFormModel, toMembers, toPhaseFields, toPhases } from './types.js';
 
 const CACHE_TTL_MS = 5 * 60_000;
 
@@ -45,6 +46,7 @@ export class BoardService {
   private phasesCache?: { at: number; value: Phase[] };
   private formCache?: { at: number; value: CreateForm };
   private formRefresh?: Promise<unknown>;
+  private membersCache?: { at: number; value: Member[] };
   private modelCache = new Map<string, { at: number; value: FormField[] }>();
 
   constructor(
@@ -73,6 +75,7 @@ export class BoardService {
     this.phasesCache = undefined;
     this.formCache = undefined;
     this.modelCache.clear();
+    this.membersCache = undefined;
   }
 
   /** Campos de um formulário (GET /models/{id}), com cache. */
@@ -87,6 +90,47 @@ export class BoardService {
   /** Campos do formulário de uma fase (preenchidos enquanto o card está nela). */
   async phaseFields(phase: Phase): Promise<FormField[]> {
     return phase.modelId ? this.modelFields(phase.modelId) : [];
+  }
+
+  /** Membros do board (quem pode ser responsável), com cache. */
+  async members(): Promise<Member[]> {
+    if (this.membersCache && Date.now() - this.membersCache.at < CACHE_TTL_MS) return this.membersCache.value;
+    const value = toMembers(await this.client.listMembers(this.boardId));
+    this.membersCache = { at: Date.now(), value };
+    return value;
+  }
+
+  /**
+   * Campo "Responsável" para o modal de criação: membros ativos do board (menos o próprio bot),
+   * opcionalmente restritos a GOALFY_RESPONSIBLES. Rótulo = nome; nomes repetidos ganham o e-mail.
+   * Devolve também o mapa rótulo → e-mail, que é o que vai para a API.
+   */
+  async responsibleField(): Promise<{ field: FormField; emailByLabel: Map<string, string> } | undefined> {
+    const allowed = this.config.GOALFY_RESPONSIBLES.map((e) => e.toLowerCase());
+    const eligible = (await this.members())
+      .filter((m) => m.accepted && !m.isCurrentUser && m.email)
+      .filter((m) => !allowed.length || allowed.includes(m.email!.toLowerCase()))
+      .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+    if (!eligible.length) return undefined;
+
+    const counts = new Map<string, number>();
+    for (const m of eligible) counts.set(m.name, (counts.get(m.name) ?? 0) + 1);
+    const emailByLabel = new Map<string, string>();
+    for (const m of eligible.slice(0, 25)) {
+      emailByLabel.set(counts.get(m.name)! > 1 ? `${m.name} (${m.email})` : m.name, m.email!);
+    }
+    return {
+      emailByLabel,
+      field: {
+        fieldInfoId: RESPONSIBLE_FIELD_ID,
+        name: 'Responsável (quem vai desenvolver)',
+        type: 'singleselect',
+        required: false,
+        options: [...emailByLabel.keys()],
+        index: Number.MAX_SAFE_INTEGER,
+        helpText: 'Opcional: pode ser definido depois na Goalfy',
+      },
+    };
   }
 
   async phases(): Promise<Phase[]> {

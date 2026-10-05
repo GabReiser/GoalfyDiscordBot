@@ -47,7 +47,8 @@ for (const g of toPhaseFields(fieldsRaw)) {
 const board = new BoardService(client, { ...config, GOALFY_BOARD_ID: boardId });
 try {
   const form = await board.createForm();
-  const plan = planCreate(form);
+  const responsible = await board.responsibleField().catch(() => undefined);
+  const plan = planCreate(form, responsible?.field);
   const fmt = (f: FormField) => `${f.name}${f.required ? ' *' : ''}${f.options.length ? ` [${f.options.slice(0, 6).join(' | ')}${f.options.length > 6 ? ' …' : ''}]` : ''}`;
 
   console.log(`\nFormulário de criação: modelId=${form.modelId} (o card nasce em: ${form.initialPhase.title})`);

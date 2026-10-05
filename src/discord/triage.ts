@@ -10,7 +10,7 @@ import {
 } from 'discord.js';
 import type { BotContext } from '../context.js';
 import { InvalidFieldValuesError } from '../goalfy/cards.js';
-import { type CreatePlan, matchOption, planCreate } from '../goalfy/formPlan.js';
+import { type CreatePlan, matchOption, planCreate, RESPONSIBLE_FIELD_ID } from '../goalfy/formPlan.js';
 import type { Card, FormField } from '../goalfy/types.js';
 import { logger } from '../logger.js';
 import { FIELD_ALIASES, type LogicalField, normalize, SEVERITY_TAGS, TOPIC_STATUS, typeFront } from '../process.js';
@@ -149,6 +149,8 @@ interface CreateDraft {
   /** Selects alterados pelo usuário (a sugestão automática não sobrescreve). */
   touched: Set<string>;
   title: string;
+  /** Rótulo do select "Responsável" → e-mail do membro na Goalfy. */
+  responsibleEmails?: Map<string, string>;
   at: number;
 }
 
@@ -244,13 +246,18 @@ function planWarning(plan: CreatePlan): string | undefined {
 /** Monta o rascunho: plano do formulário + sugestões tiradas do tópico. */
 async function prepareDraft(ctx: BotContext, thread: AnyThreadChannel | undefined): Promise<CreateDraft> {
   const form = await ctx.board.createForm();
-  const plan = planCreate(form);
+  // Sem os membros (API fora), o card ainda pode ser criado: só some o campo "Responsável".
+  const responsible = await ctx.board.responsibleField().catch((e) => {
+    logger.warn('Não consegui listar os membros do board para o campo Responsável', e);
+    return undefined;
+  });
+  const plan = planCreate(form, responsible?.field);
   const topic = await topicContext(thread);
   const values = {
     ...suggestSelects(plan.selects, thread ? forumTagNames(thread) : [], topic.parsed),
     ...suggestTexts({ description: form.fields.description }, plan.modal, topic),
   };
-  return { plan, values, touched: new Set(), title: thread?.name ?? '', at: Date.now() };
+  return { plan, values, touched: new Set(), title: thread?.name ?? '', responsibleEmails: responsible?.emailByLabel, at: Date.now() };
 }
 
 /**
@@ -407,12 +414,32 @@ async function createFromDraft(ctx: BotContext, interaction: ModalSubmitInteract
     });
     drafts.delete(draftKey(interaction.user.id, interaction.channelId));
 
+    // Responsável escolhido no modal 2 (campo virtual): vai por addResponsible, com o e-mail do membro.
+    const responsibleLabel = d.values[RESPONSIBLE_FIELD_ID]?.[0];
+    const responsibleEmail = responsibleLabel ? d.responsibleEmails?.get(responsibleLabel) : undefined;
+    let responsibleNote = '';
+    if (responsibleEmail) {
+      try {
+        await ctx.cards.addResponsible(card.id, responsibleEmail);
+        Object.assign(card, await ctx.cards.get(card.id).catch(() => card)); // embed já com o responsável
+      } catch (e) {
+        logger.warn(`Card #${card.id} criado, mas não consegui definir o responsável`, e);
+        responsibleNote = `⚠️ Não consegui definir **${responsibleLabel}** como responsável; defina na Goalfy.`;
+      }
+    }
+
     const classification = Object.fromEntries(
       d.plan.selects.filter((f) => d.values[f.fieldInfoId]?.length).map((f) => [f.name, d.values[f.fieldInfoId]!.join(', ')]),
     );
-    const summary = Object.entries(classification)
-      .map(([k, v]) => `**${k}:** ${v}`)
-      .join(' · ');
+    const summary = [
+      Object.entries(classification)
+        .map(([k, v]) => `**${k}:** ${v}`)
+        .join(' · '),
+      responsibleLabel && !responsibleNote ? `👤 **Responsável:** ${responsibleLabel}` : '',
+      responsibleNote,
+    ]
+      .filter(Boolean)
+      .join('\n');
 
     if (thread) {
       await linkThread(ctx, thread, card, interaction.user.id);

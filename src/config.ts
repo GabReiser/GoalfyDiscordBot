@@ -64,6 +64,8 @@ const goalfySchema = z.object({
   GOALFY_FIELD_TICKET_LINK: optional,
   GOALFY_FIELD_REQUESTER: optional,
   GOALFY_DONE_PHASES: csv,
+  /** Opcional: e-mails de quem pode ser escolhido como responsável (padrão: todos os membros do board). */
+  GOALFY_RESPONSIBLES: csv,
 });
 
 /** IDs do Discord ("snowflakes") são só dígitos; pega o erro comum de colar o token no lugar do ID. */
