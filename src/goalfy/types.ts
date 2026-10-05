@@ -51,6 +51,8 @@ export interface Phase {
   archived: boolean;
   /** Flag "fase de conclusão" do board (`done` em GET /phases/board/{id}). */
   done?: boolean;
+  /** "Permitir criar card direto na fase" (configuração da fase na Goalfy). */
+  allowDirectCreation?: boolean;
   description?: string;
 }
 
@@ -65,6 +67,7 @@ export function toPhase(raw: unknown): Phase | undefined {
     index: typeof raw.index === 'number' ? raw.index : Number(raw.index ?? 0),
     archived: raw.archived === true,
     done: typeof raw.done === 'boolean' ? raw.done : undefined,
+    allowDirectCreation: raw.allowDirectCardCreation === true,
     description: pick(raw, 'description'),
   };
 }

@@ -40,10 +40,12 @@ export const IDS = {
   // Classificação (passo 1 da criação)
   classify: (fieldInfoId: string) => `classify:${fieldInfoId}`,
   classifyOpen: 'classify:open',
+  classifyPhase: 'classify:phase',
   classifyNext: 'classify:next',
   classifyCancel: 'classify:cancel',
   // Modais
   classifyModal: 'modal:classify',
+  phaseModal: 'modal:phase',
   createModal: 'modal:create',
   linkModal: 'modal:link',
   waitingModal: 'modal:waiting',
@@ -213,14 +215,26 @@ export const selectedOptions = (f: FormField, indexes: readonly string[]) =>
  *  - "open": formulário pronto (quando o modal não pôde abrir direto no clique)
  *  - "classified": classificação escolhida, falta o passo 2
  */
-export function draftMessage(fields: FormField[], values: FormValues, stage: 'open' | 'classified', note?: string) {
+export interface DraftPhase {
+  title: string;
+  /** Há mais de uma fase em que o card pode nascer: mostra o botão "Alterar fase". */
+  canChange: boolean;
+}
+
+export function draftMessage(fields: FormField[], values: FormValues, stage: 'open' | 'classified', note?: string, phase?: DraftPhase) {
   const chosen = fields
     .filter((f) => values[f.fieldInfoId]?.length)
     .map((f) => `**${f.name}:** ${values[f.fieldInfoId]!.join(', ')}`);
   const description =
     stage === 'open'
       ? ['O formulário está pronto.', chosen.length ? `Já deduzido do tópico: ${chosen.join(' · ')}` : '']
-      : ['**Passo 1 de 2 concluído.**', chosen.join('\n') || '_Sem classificação_', '', 'Clique em **Continuar** para preencher a descrição e os demais campos.'];
+      : [
+          '**Passo 1 de 2 concluído.**',
+          chosen.join('\n') || '_Sem classificação_',
+          phase ? `📍 **Fase em que o card nasce:** ${phase.title}` : '',
+          '',
+          'Clique em **Continuar** para preencher a descrição e os demais campos.',
+        ];
   const embed = new EmbedBuilder()
     .setColor(note ? COLORS.warn : COLORS.brand)
     .setTitle('📋 Criar card')
@@ -236,6 +250,9 @@ export function draftMessage(fields: FormField[], values: FormValues, stage: 'op
       : [
           new ButtonBuilder().setCustomId(IDS.classifyNext).setStyle(ButtonStyle.Success).setLabel('Continuar').setEmoji('➡️'),
           new ButtonBuilder().setCustomId(IDS.classifyOpen).setStyle(ButtonStyle.Secondary).setLabel('Alterar classificação').setEmoji('✏️'),
+          ...(phase?.canChange
+            ? [new ButtonBuilder().setCustomId(IDS.classifyPhase).setStyle(ButtonStyle.Secondary).setLabel('Alterar fase').setEmoji('📍')]
+            : []),
         ];
   buttons.push(new ButtonBuilder().setCustomId(IDS.classifyCancel).setStyle(ButtonStyle.Secondary).setLabel('Cancelar'));
   return { content: '', embeds: [embed], components: [new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons)] };
@@ -282,6 +299,31 @@ export function fieldInput(f: FormField, value: string[] = []): LabelBuilder {
     text(fieldInputId(f.fieldInfoId), style, { value: value[0], max: kind === 'longtext' ? 4000 : 1000, required: f.required, placeholder }),
     f.helpText,
   );
+}
+
+/** Escolha da fase em que o card nasce (modal: a escolha fica local, sem travar o Discord). */
+export function phaseModal(phases: { id: string; title: string }[], currentId: string | undefined) {
+  return new ModalBuilder()
+    .setCustomId(IDS.phaseModal)
+    .setTitle('Fase em que o card nasce')
+    .addLabelComponents(
+      new LabelBuilder()
+        .setLabel('Fase')
+        .setDescription('Só aparecem as fases liberadas para abrir card')
+        .setStringSelectMenuComponent(
+          new StringSelectMenuBuilder()
+            .setCustomId('phase')
+            .addOptions(
+              phases.slice(0, 25).map((p, i) =>
+                new StringSelectMenuOptionBuilder()
+                  .setLabel(truncate(p.title, 100))
+                  .setValue(p.id)
+                  .setDescription(i === 0 ? 'Fase inicial do board' : 'Abrir o card direto nesta fase')
+                  .setDefault(p.id === (currentId ?? phases[0]?.id)),
+              ),
+            ),
+        ),
+    );
 }
 
 /** Passo 1 da criação: título + campos de seleção (até 4), já pré-selecionados. */

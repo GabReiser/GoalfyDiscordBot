@@ -63,6 +63,12 @@ try {
     console.log(`  ⚠️  OBRIGATÓRIOS QUE O BOT NÃO CONSEGUE PREENCHER: ${plan.missingRequired.map(fmt).join(', ')}`);
   }
 
+  const creatable = await board.creatablePhases();
+  console.log(
+    `\nFases em que o card pode nascer: ${creatable.map((p) => p.title).join(', ')}` +
+      (creatable.length === 1 ? '\n  (para liberar outras: "criar card direto" na fase, na Goalfy, ou GOALFY_CREATE_PHASES)' : ''),
+  );
+
   console.log('\nFases com campos obrigatórios (o bot pede antes de mover):');
   let any = false;
   for (const p of phases) {

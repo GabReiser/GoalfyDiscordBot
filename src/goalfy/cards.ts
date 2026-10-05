@@ -14,6 +14,8 @@ export interface NewCardInput {
   values: FieldInputs;
   requester: string;
   discordUrl?: string;
+  /** Fase em que o card nasce (padrão: a inicial do board). */
+  phaseId?: string;
 }
 
 export class InvalidFieldValuesError extends Error {
@@ -72,7 +74,7 @@ export class CardService {
     const { fields, problems } = buildFieldValues(form.allFields, values);
     if (problems.length) throw new InvalidFieldValuesError(problems);
 
-    const raw = await this.client.createCard(form.modelId, fields);
+    const raw = await this.client.createCard(form.modelId, fields, input.phaseId);
     const id = extractCardId(raw);
     if (!id) {
       logger.error('Card criado, mas não encontrei o ID na resposta', raw);

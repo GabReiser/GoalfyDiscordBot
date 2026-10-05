@@ -155,6 +155,20 @@ export class BoardService {
     return phase.done ?? DONE_PHASE_PATTERN.test(phase.title);
   }
 
+  /**
+   * Fases em que o card pode nascer: a inicial (sempre, primeira da lista), as que têm
+   * "permitir criar card direto" na Goalfy e as de GOALFY_CREATE_PHASES. Nunca fases finais.
+   */
+  async creatablePhases(): Promise<Phase[]> {
+    const phases = await this.phases();
+    const configured = this.config.GOALFY_CREATE_PHASES.map(normalize);
+    return phases.filter(
+      (p, i) =>
+        i === 0 ||
+        (!this.isDone(p) && (p.allowDirectCreation || configured.includes(normalize(p.title)) || this.config.GOALFY_CREATE_PHASES.includes(p.id))),
+    );
+  }
+
   /** Fase final de cancelamento/arquivamento (ex.: "Cancelado/Arquivado"). */
   isCancel(phase: Phase): boolean {
     return this.isDone(phase) && CANCEL_PHASE_PATTERN.test(phase.title);

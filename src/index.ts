@@ -8,6 +8,8 @@ import {
   onClassifyNext,
   onClassifyModal,
   onClassifyOpen,
+  onClassifyPhase,
+  onPhaseModal,
   onLegacyClassifySelect,
   onCreateModal,
   onLinkButton,
@@ -74,6 +76,7 @@ async function route(interaction: Interaction) {
     }
     if (scope === 'classify') {
       if (action === 'open') return onClassifyOpen(interaction);
+      if (action === 'phase') return onClassifyPhase(interaction);
       if (action === 'next') return onClassifyNext(ctx, interaction);
       if (action === 'cancel') return onClassifyCancel(interaction);
     }
@@ -88,6 +91,7 @@ async function route(interaction: Interaction) {
 
   if (interaction.isModalSubmit() && scope === 'modal') {
     if (action === 'classify') return onClassifyModal(ctx, interaction);
+    if (action === 'phase') return onPhaseModal(interaction);
     if (action === 'create') return onCreateModal(ctx, interaction);
     if (action === 'link') return onLinkModal(ctx, interaction);
     if (action === 'waiting') return onWaitingModal(ctx, interaction);

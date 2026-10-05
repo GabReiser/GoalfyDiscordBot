@@ -160,8 +160,9 @@ export class GoalfyClient {
     return this.request('GET', `/cards/board/${enc(boardId)}/filter${q ? `?${q}` : ''}`);
   }
   /** Cria o card na fase inicial do fluxo do formulário `modelId`. */
-  createCard(modelId: string, fields: FieldValue[]) {
-    return this.request('POST', '/cards/form/', { modelId, fields });
+  /** Sem `phaseId`, o card nasce na fase inicial do board; com ele, direto na fase informada. */
+  createCard(modelId: string, fields: FieldValue[], phaseId?: string) {
+    return this.request('POST', '/cards/form/', { modelId, fields, ...(phaseId ? { phaseId } : {}) });
   }
   setCardTitle(cardId: string, title: string) {
     return this.request('PUT', `/cards/${enc(cardId)}`, { title });

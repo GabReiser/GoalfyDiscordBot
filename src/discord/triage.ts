@@ -29,6 +29,7 @@ import {
   infoEmbed,
   linkModal,
   okEmbed,
+  phaseModal,
   readModalValues,
   rejectModal,
   resolveModal,
@@ -151,6 +152,9 @@ interface CreateDraft {
   title: string;
   /** Rótulo do select "Responsável" → e-mail do membro na Goalfy. */
   responsibleEmails?: Map<string, string>;
+  /** Fases em que o card pode nascer (a primeira é a inicial do board) e a escolhida. */
+  phases: { id: string; title: string }[];
+  phaseId?: string;
   at: number;
 }
 
@@ -257,7 +261,17 @@ async function prepareDraft(ctx: BotContext, thread: AnyThreadChannel | undefine
     ...suggestSelects(plan.selects, thread ? forumTagNames(thread) : [], topic.parsed),
     ...suggestTexts({ description: form.fields.description }, plan.modal, topic),
   };
-  return { plan, values, touched: new Set(), title: thread?.name ?? '', responsibleEmails: responsible?.emailByLabel, at: Date.now() };
+  const phases = (await ctx.board.creatablePhases().catch(() => [])).map((p) => ({ id: p.id, title: p.title }));
+  return {
+    plan,
+    values,
+    touched: new Set(),
+    title: thread?.name ?? '',
+    responsibleEmails: responsible?.emailByLabel,
+    phases,
+    phaseId: phases[0]?.id,
+    at: Date.now(),
+  };
 }
 
 /**
@@ -330,7 +344,31 @@ export async function onClassifyModal(ctx: BotContext, interaction: ModalSubmitI
   // Formulário sem campos de texto: não há passo 2, cria direto.
   if (!d.plan.modal.length) return createFromDraft(ctx, interaction, d);
 
-  const message = draftMessage(d.plan.selects, d.values, 'classified', planWarning(d.plan));
+  const message = draftMessage(d.plan.selects, d.values, 'classified', planWarning(d.plan), draftPhase(d));
+  if (interaction.isFromMessage()) await interaction.update(message);
+  else await interaction.reply({ flags: MessageFlags.Ephemeral, ...message });
+}
+
+function draftPhase(d: CreateDraft) {
+  if (!d.phases.length) return undefined;
+  const current = d.phases.find((p) => p.id === d.phaseId) ?? d.phases[0]!;
+  return { title: current.title, canChange: d.phases.length > 1 };
+}
+
+/** Botão "Alterar fase": modal com as fases liberadas para abrir card. */
+export async function onClassifyPhase(interaction: ButtonInteraction) {
+  const d = getDraft(interaction.user.id, interaction.channelId);
+  if (!d) return void (await interaction.update(expired));
+  await interaction.showModal(phaseModal(d.phases, d.phaseId));
+}
+
+export async function onPhaseModal(interaction: ModalSubmitInteraction) {
+  const d = getDraft(interaction.user.id, interaction.channelId);
+  if (!d) return void (await interaction.reply({ flags: MessageFlags.Ephemeral, ...expired }));
+  const chosen = interaction.fields.getStringSelectValues('phase')[0];
+  if (chosen && d.phases.some((p) => p.id === chosen)) d.phaseId = chosen;
+  saveDraft(interaction.user.id, interaction.channelId, d);
+  const message = draftMessage(d.plan.selects, d.values, 'classified', planWarning(d.plan), draftPhase(d));
   if (interaction.isFromMessage()) await interaction.update(message);
   else await interaction.reply({ flags: MessageFlags.Ephemeral, ...message });
 }
@@ -411,6 +449,8 @@ async function createFromDraft(ctx: BotContext, interaction: ModalSubmitInteract
       values: d.values,
       requester: owner?.displayName ?? member?.displayName ?? interaction.user.username,
       discordUrl: thread?.url,
+      // Fase inicial = não manda phaseId (a Goalfy usa a própria); outra = abre direto nela.
+      phaseId: d.phaseId && d.phaseId !== d.phases[0]?.id ? d.phaseId : undefined,
     });
     drafts.delete(draftKey(interaction.user.id, interaction.channelId));
 
@@ -459,7 +499,7 @@ async function createFromDraft(ctx: BotContext, interaction: ModalSubmitInteract
   } catch (e) {
     if (e instanceof InvalidFieldValuesError) {
       // Mostra o motivo com os botões para corrigir; os modais reabrem com o que já foi preenchido.
-      await interaction.editReply(draftMessage(d.plan.selects, d.values, 'classified', e.problems.join(' ')));
+      await interaction.editReply(draftMessage(d.plan.selects, d.values, 'classified', e.problems.join(' '), draftPhase(d)));
       return;
     }
     logger.error('Falha ao criar card', e);

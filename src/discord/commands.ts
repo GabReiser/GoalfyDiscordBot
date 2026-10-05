@@ -328,6 +328,10 @@ async function handleGoalfy(ctx: BotContext, interaction: ChatInputCommandIntera
           { name: 'Criação de card (* = obrigatório)', value: truncate(creation.join('\n'), 1024) },
           { name: 'Fases com campos obrigatórios', value: truncate(phaseRules.join('\n') || '—', 1024) },
           {
+            name: 'Fases em que o card pode nascer',
+            value: truncate((await ctx.board.creatablePhases()).map((p) => p.title).join(', ') || '—', 1024),
+          },
+          {
             name: 'Servidor do Discord',
             value: truncate(setupProblems.map((p) => `⚠️ ${p}`).join('\n') || '✅ fórum, tags, permissões e cargos ok', 1024),
           },
