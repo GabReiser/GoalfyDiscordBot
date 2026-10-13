@@ -1,7 +1,7 @@
 import { ActivityType, Client, Events, GatewayIntentBits, type Interaction, MessageFlags, Partials } from 'discord.js';
 import { loadBotConfig } from './config.js';
 import type { BotContext } from './context.js';
-import { onAutocomplete, onCardButton, onCardSelect, onChatInput, onSendToCard } from './discord/commands.js';
+import { onAttachToCard, onAutocomplete, onCardButton, onCardSelect, onChatInput, onSendToCard } from './discord/commands.js';
 import { startSync } from './discord/sync.js';
 import {
   onClassifyCancel,
@@ -61,7 +61,9 @@ const ctx: BotContext = {
 async function route(interaction: Interaction) {
   if (interaction.isAutocomplete()) return onAutocomplete(ctx, interaction);
   if (interaction.isChatInputCommand()) return onChatInput(ctx, interaction);
-  if (interaction.isMessageContextMenuCommand()) return onSendToCard(ctx, interaction);
+  if (interaction.isMessageContextMenuCommand()) {
+    return interaction.commandName === 'Anexar ao card Goalfy' ? onAttachToCard(ctx, interaction) : onSendToCard(ctx, interaction);
+  }
 
   if (!('customId' in interaction)) return;
   const [scope, action = '', ...arg] = interaction.customId.split(':');

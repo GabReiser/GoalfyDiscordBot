@@ -21,6 +21,8 @@ export interface NewCardInput {
 }
 
 export interface SourceAttachment {
+  /** ID do anexo no Discord (para não copiar o mesmo arquivo duas vezes no mesmo card). */
+  id?: string;
   name: string;
   url: string;
   contentType?: string;
@@ -30,6 +32,8 @@ export interface SourceAttachment {
 export interface AttachmentReport {
   copied: string[];
   failed: string[];
+  /** URLs (Discord) dos arquivos copiados com sucesso. */
+  copiedUrls?: Set<string>;
 }
 
 /** Caminhos já gravados num campo de anexo (lista, JSON ou texto separado por vírgula). */
@@ -156,7 +160,7 @@ export class CardService {
    */
   async appendAttachments(cardId: string, attachments: SourceAttachment[]): Promise<AttachmentReport & { fieldName?: string }> {
     const field = (await this.board.createForm()).fields.attachments;
-    if (!field) return { copied: [], failed: attachments.map((a) => a.name) };
+    if (!field) return { copied: [], failed: attachments.map((a) => a.name), copiedUrls: new Set() };
     const card = await this.get(cardId);
     if (!card.initialForm) throw new Error('Não encontrei o formulário inicial deste card na Goalfy.');
 
@@ -167,7 +171,7 @@ export class CardService {
       if (existing?.id) await this.client.updateCardField(existing.id, value);
       else await this.client.fillCardField(card.initialForm.id, cardId, field.fieldInfoId, value);
     }
-    return { copied: imported.copied, failed: imported.failed, fieldName: field.name };
+    return { copied: imported.copied, failed: imported.failed, copiedUrls: imported.copiedUrls, fieldName: field.name };
   }
 
   async create(input: NewCardInput): Promise<Card & { attachmentReport?: AttachmentReport }> {
@@ -195,7 +199,7 @@ export class CardService {
         values[descriptionId] = (Array.isArray(description) ? description : [description]).map((text) => replaceUrls(text, note));
       }
       if (imported.paths.length) values[attachField.fieldInfoId] = imported.paths;
-      attachmentReport = { copied: imported.copied, failed: imported.failed };
+      attachmentReport = { copied: imported.copied, failed: imported.failed, copiedUrls: imported.copiedUrls };
     }
 
     const { fields, problems } = buildFieldValues(form.allFields, values);

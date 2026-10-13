@@ -15,6 +15,7 @@ import {
   TimestampStyles,
 } from 'discord.js';
 import type { BotContext } from '../context.js';
+import type { SourceAttachment } from '../goalfy/cards.js';
 import { type Card, type FormField, toCards } from '../goalfy/types.js';
 import { logger } from '../logger.js';
 import { normalize, TOPIC_STATUS } from '../process.js';
@@ -103,7 +104,64 @@ const sendToCardMenu = new ContextMenuCommandBuilder()
   .setType(ApplicationCommandType.Message)
   .setContexts(InteractionContextType.Guild);
 
-export const commandData = [cardCommand, triageCommand, goalfyCommand, sendToCardMenu].map((c) => c.toJSON());
+const attachToCardMenu = new ContextMenuCommandBuilder()
+  .setName('Anexar ao card Goalfy')
+  .setType(ApplicationCommandType.Message)
+  .setContexts(InteractionContextType.Guild);
+
+export const commandData = [cardCommand, triageCommand, goalfyCommand, sendToCardMenu, attachToCardMenu].map((c) => c.toJSON());
+
+type MessageAttachments = MessageContextMenuCommandInteraction['targetMessage']['attachments'];
+
+function sourceAttachments(attachments: MessageAttachments): SourceAttachment[] {
+  return [...attachments.values()].map((a) => ({ id: a.id, name: a.name, url: a.url, contentType: a.contentType ?? undefined, size: a.size }));
+}
+
+/**
+ * Copia para o anexo do card só o que ainda não foi copiado (mesma mensagem usada nos dois
+ * comandos, clique repetido, evidência da criação) e registra o que deu certo.
+ */
+async function attachNew(ctx: BotContext, cardId: string, source: SourceAttachment[]) {
+  const done = ctx.store.importedAttachments(cardId);
+  const pending = source.filter((a) => !a.id || !done.has(a.id));
+  const already = source.filter((a) => a.id && done.has(a.id));
+  const report = pending.length ? await ctx.cards.appendAttachments(cardId, pending) : { copied: [], failed: [], copiedUrls: new Set<string>(), fieldName: undefined };
+  ctx.store.markAttachmentsImported(
+    cardId,
+    pending.filter((a) => a.id && report.copiedUrls?.has(a.url)).map((a) => a.id!),
+  );
+  return { ...report, already: already.map((a) => a.name) };
+}
+
+/** Menu de mensagem "Anexar ao card Goalfy": arquivos da mensagem → campo de anexo do card. */
+export async function onAttachToCard(ctx: BotContext, interaction: MessageContextMenuCommandInteraction) {
+  const link = ctx.store.byThread(interaction.channelId);
+  if (!link) {
+    await interaction.reply({ flags: MessageFlags.Ephemeral, content: 'Este canal não está vinculado a um card.' });
+    return;
+  }
+  const source = sourceAttachments(interaction.targetMessage.attachments);
+  if (!source.length) {
+    await interaction.reply({ flags: MessageFlags.Ephemeral, content: 'Essa mensagem não tem imagens nem arquivos para anexar.' });
+    return;
+  }
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  try {
+    const r = await attachNew(ctx, link.cardId, source);
+    const card = `[#${link.cardId}](${ctx.board.cardUrl(link.cardId)})`;
+    const lines = [
+      r.copied.length ? `📎 Anexado ao card ${card}${r.fieldName ? ` (campo ${r.fieldName})` : ''}: ${r.copied.join(', ')}` : '',
+      r.already.length ? `↩️ Já estava no card: ${r.already.join(', ')}` : '',
+      r.failed.length ? `⚠️ Não consegui anexar: ${r.failed.join(', ')}` : '',
+    ].filter(Boolean);
+    const embed = r.failed.length && !r.copied.length ? errorEmbed(new Error(lines.join('\n'))) : okEmbed(lines.join('\n'));
+    await interaction.editReply({ embeds: [embed] });
+    if (r.copied.length) logger.info(`${r.copied.length} arquivo(s) anexado(s) ao card #${link.cardId} por ${interaction.user.tag}`);
+  } catch (e) {
+    logger.warn(`Falha ao anexar arquivos ao card ${link.cardId}`, e);
+    await interaction.editReply({ embeds: [errorEmbed(e)] });
+  }
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -366,10 +424,10 @@ export async function onSendToCard(ctx: BotContext, interaction: MessageContextM
   try {
     // Anexos vão para o campo de anexo do card (privado, não vence); o que não der para copiar
     // fica com o link do Discord, que vence em ~24h.
-    const source = [...msg.attachments.values()].map((a) => ({ name: a.name, url: a.url, contentType: a.contentType ?? undefined, size: a.size }));
-    const report = source.length ? await ctx.cards.appendAttachments(link.cardId, source) : undefined;
+    const source = sourceAttachments(msg.attachments);
+    const report = source.length ? await attachNew(ctx, link.cardId, source) : undefined;
     const attachments = source.map((a) =>
-      report?.copied.includes(a.name) ? `📎 ${a.name} (no campo ${report.fieldName} do card)` : `📎 ${a.name}: ${a.url}`,
+      report?.copied.includes(a.name) || report?.already.includes(a.name) ? `📎 ${a.name} (no campo ${report.fieldName ?? 'de anexo'} do card)` : `📎 ${a.name}: ${a.url}`,
     );
     const body = [`${msg.member?.displayName ?? msg.author.username} (via ${interaction.user.displayName}):`, msg.content, ...attachments, msg.url]
       .filter(Boolean)

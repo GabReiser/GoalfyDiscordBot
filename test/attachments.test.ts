@@ -80,7 +80,8 @@ describe('evidências na criação do card', () => {
     assert.ok(!desc.includes('X-Goog-Expires'), 'nenhum link assinado temporário na descrição');
     assert.ok(desc.includes(DISCORD_GONE), 'o que não deu para copiar fica com o link original');
 
-    assert.deepEqual(card.attachmentReport, { copied: ['print tela.png'], failed: ['video.mp4'] });
+    assert.deepEqual([card.attachmentReport?.copied, card.attachmentReport?.failed], [['print tela.png'], ['video.mp4']]);
+    assert.deepEqual([...card.attachmentReport!.copiedUrls!], [DISCORD], 'URLs copiadas, para registrar e não duplicar');
   });
 
   it('formulário sem campo de anexo: não copia (não há onde guardar) e mantém o link', async () => {
@@ -99,7 +100,7 @@ describe('Enviar ao card Goalfy: acrescentar ao anexo existente', () => {
     });
     const r = await cards.appendAttachments('c1', attachments);
     assert.deepEqual(calls.find((c) => c.op === 'update')!.args, ['FIELD-9', 'antigo-1/a.png,antigo-2/b.png,uuid-1/print_tela.png']);
-    assert.deepEqual(r, { copied: ['print tela.png'], failed: ['video.mp4'], fieldName: 'Anexo' });
+    assert.deepEqual([r.copied, r.failed, r.fieldName], [['print tela.png'], ['video.mp4'], 'Anexo']);
   });
 
   it('campo ainda vazio no card: cria o valor no formulário inicial', async () => {

@@ -86,6 +86,13 @@ export class Store {
       );
 
       -- Comentários da Goalfy já espelhados no Discord
+      -- Anexos do Discord já copiados para o campo de anexo de cada card (evita duplicar)
+      CREATE TABLE IF NOT EXISTS imported_attachments (
+        card_id       TEXT NOT NULL,
+        attachment_id TEXT NOT NULL,
+        PRIMARY KEY (card_id, attachment_id)
+      );
+
       CREATE TABLE IF NOT EXISTS seen_comments (
         card_id    TEXT NOT NULL,
         comment_id TEXT NOT NULL,
@@ -166,6 +173,17 @@ export class Store {
   }
 
   /** Marca comentários como vistos e retorna só os que eram novos. */
+/** IDs (do Discord) dos anexos já copiados para o card. */
+  importedAttachments(cardId: string): Set<string> {
+    const rows = this.db.prepare('SELECT attachment_id FROM imported_attachments WHERE card_id = ?').all(cardId) as Row[];
+    return new Set(rows.map((r) => String(r.attachment_id)));
+  }
+
+  markAttachmentsImported(cardId: string, attachmentIds: string[]) {
+    const insert = this.db.prepare('INSERT OR IGNORE INTO imported_attachments (card_id, attachment_id) VALUES (?, ?)');
+    for (const id of attachmentIds) insert.run(cardId, id);
+  }
+
   markSeen(cardId: string, commentIds: string[]): Set<string> {
     const insert = this.db.prepare('INSERT OR IGNORE INTO seen_comments (card_id, comment_id) VALUES (?, ?)');
     const fresh = new Set<string>();

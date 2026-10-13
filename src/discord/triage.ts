@@ -268,7 +268,7 @@ async function prepareDraft(ctx: BotContext, thread: AnyThreadChannel | undefine
   // Evidências: na criação, cada arquivo é copiado para a Goalfy e o link do Discord na
   // descrição (que vence em ~24h) é trocado pela URL permanente.
   const attachments: SourceAttachment[] = topic.message
-    ? [...topic.message.attachments.values()].map((a) => ({ name: a.name, url: a.url, contentType: a.contentType ?? undefined, size: a.size }))
+    ? [...topic.message.attachments.values()].map((a) => ({ id: a.id, name: a.name, url: a.url, contentType: a.contentType ?? undefined, size: a.size }))
     : [];
   return {
     plan,
@@ -463,6 +463,10 @@ async function createFromDraft(ctx: BotContext, interaction: ModalSubmitInteract
       attachments: d.attachments,
     });
     drafts.delete(draftKey(interaction.user.id, interaction.channelId));
+    const copiedUrls = card.attachmentReport?.copiedUrls;
+    if (copiedUrls?.size) {
+      ctx.store.markAttachmentsImported(card.id, d.attachments.filter((a) => a.id && copiedUrls.has(a.url)).map((a) => a.id!));
+    }
 
     // Responsável escolhido no modal 2 (campo virtual): vai por addResponsible, com o e-mail do membro.
     const responsibleLabel = d.values[RESPONSIBLE_FIELD_ID]?.[0];
