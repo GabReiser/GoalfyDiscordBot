@@ -87,7 +87,8 @@ export interface CreatePlan {
 export const RESPONSIBLE_FIELD_ID = '__responsible';
 
 export function planCreate(form: CreateForm, responsible?: FormField): CreatePlan {
-  const auto = [form.fields.discordLink, form.fields.requester].filter((f): f is FormField => !!f);
+  // O anexo é automático: o bot copia as evidências do tópico para a Goalfy (ver CardService.importAttachments).
+  const auto = [form.fields.discordLink, form.fields.requester, form.fields.attachments].filter((f): f is FormField => !!f);
   const titleField = form.fields.title;
   const handled = new Set([...auto, ...(titleField ? [titleField] : [])].map((f) => f.fieldInfoId));
   const rest = form.allFields.filter((f) => !handled.has(f.fieldInfoId));

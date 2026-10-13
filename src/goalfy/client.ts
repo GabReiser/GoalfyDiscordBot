@@ -197,6 +197,36 @@ export class GoalfyClient {
     return this.request('DELETE', `/external/v1/boards/${enc(boardId)}/hook/${enc(hookId)}`);
   }
 
+  // ── Arquivos ──────────────────────────────────────────────────────────────
+  /**
+   * Envia um arquivo (privado) para o armazenamento da Goalfy, o mesmo upload do front.
+   * Retorna `{ url, path }`: `path` (`<uuid>/<nome>`) é permanente e é o que vai no campo de
+   * anexo; `url` é um link assinado que vence em 15 min.
+   * Obs.: /files/uploadPublic deixaria o arquivo aberto a quem tiver o link (evitado: prints têm
+   * dados de cliente); /files/download (importar por URL) exigiria papel ADMIN na organização.
+   */
+  async uploadFile(fileName: string, data: Uint8Array, contentType = 'application/octet-stream'): Promise<unknown> {
+    const form = new FormData();
+    form.append('file', new Blob([data], { type: contentType }), fileName);
+    form.append('fileName', fileName);
+    const route = '/files/upload';
+    const res = await fetch(`${this.baseUrl.replace(/\/$/, '')}${route}`, {
+      method: 'POST',
+      headers: { Authorization: `Token ${this.token}`, Accept: 'application/json' },
+      body: form,
+      signal: AbortSignal.timeout(60_000),
+    });
+    const text = await res.text();
+    let body: unknown = text;
+    try {
+      body = text ? JSON.parse(text) : undefined;
+    } catch {
+      // resposta não-JSON
+    }
+    if (!res.ok) throw new GoalfyError(res.status, body, `Goalfy POST ${route} → ${res.status}`);
+    return body;
+  }
+
   // ── Membros e responsáveis ────────────────────────────────────────────────
   /** Membros de um contexto (board): `{ members: [{ id, name, email, role, status, isCurrentUser }], total }`. */
   listMembers(contextId: string) {

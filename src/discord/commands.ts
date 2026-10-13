@@ -363,13 +363,20 @@ export async function onSendToCard(ctx: BotContext, interaction: MessageContextM
   }
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const msg = interaction.targetMessage;
-  const attachments = [...msg.attachments.values()].map((a) => `📎 ${a.name}: ${a.url}`);
-  const body = [`${msg.member?.displayName ?? msg.author.username} (via ${interaction.user.displayName}):`, msg.content, ...attachments, msg.url]
-    .filter(Boolean)
-    .join('\n');
   try {
+    // Anexos vão para o campo de anexo do card (privado, não vence); o que não der para copiar
+    // fica com o link do Discord, que vence em ~24h.
+    const source = [...msg.attachments.values()].map((a) => ({ name: a.name, url: a.url, contentType: a.contentType ?? undefined, size: a.size }));
+    const report = source.length ? await ctx.cards.appendAttachments(link.cardId, source) : undefined;
+    const attachments = source.map((a) =>
+      report?.copied.includes(a.name) ? `📎 ${a.name} (no campo ${report.fieldName} do card)` : `📎 ${a.name}: ${a.url}`,
+    );
+    const body = [`${msg.member?.displayName ?? msg.author.username} (via ${interaction.user.displayName}):`, msg.content, ...attachments, msg.url]
+      .filter(Boolean)
+      .join('\n');
     await ctx.cards.comment(link.cardId, body);
-    await interaction.editReply({ embeds: [okEmbed(`Mensagem enviada como comentário no card #${link.cardId}.`)] });
+    const note = report?.failed.length ? ` Não consegui anexar: ${report.failed.join(', ')}.` : '';
+    await interaction.editReply({ embeds: [okEmbed(`Mensagem enviada como comentário no card #${link.cardId}.${note}`)] });
   } catch (e) {
     await interaction.editReply({ embeds: [errorEmbed(e)] });
   }

@@ -16,6 +16,57 @@ export interface NewCardInput {
   discordUrl?: string;
   /** Fase em que o card nasce (padrão: a inicial do board). */
   phaseId?: string;
+  /** Evidências do tópico (anexos do Discord): copiadas para a Goalfy, porque os links do Discord vencem. */
+  attachments?: SourceAttachment[];
+}
+
+export interface SourceAttachment {
+  name: string;
+  url: string;
+  contentType?: string;
+  size?: number;
+}
+
+export interface AttachmentReport {
+  copied: string[];
+  failed: string[];
+}
+
+/** Caminhos já gravados num campo de anexo (lista, JSON ou texto separado por vírgula). */
+export function attachmentPaths(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean);
+  if (typeof value !== 'string' || !value.trim()) return [];
+  const v = value.trim();
+  if (v.startsWith('[')) {
+    try {
+      return (JSON.parse(v) as unknown[]).map(String).filter(Boolean);
+    } catch {
+      // segue para o formato separado por vírgula
+    }
+  }
+  return v.split(',').map((p) => p.trim()).filter(Boolean);
+}
+
+/** Troca cada trecho (ex.: link do Discord) pelo correspondente. */
+export function replaceUrls(text: string, map: Map<string, string>): string {
+  let out = text;
+  for (const [from, to] of map) out = out.split(from).join(to);
+  return out;
+}
+
+/** Limites da cópia de evidências (por card). */
+const MAX_ATTACHMENTS = 10;
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+/** Nome aceito no caminho do armazenamento: sem acento, espaço ou caractere especial (como o front faz). */
+export function safeFileName(name: string): string {
+  const clean = name
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/[^\w.-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^[_.]+/, '');
+  return (clean || 'arquivo').slice(-120);
 }
 
 export class InvalidFieldValuesError extends Error {
@@ -64,12 +115,88 @@ export class CardService {
     return card;
   }
 
-  async create(input: NewCardInput): Promise<Card> {
+  /**
+   * Copia anexos do Discord para o armazenamento da Goalfy e devolve os caminhos permanentes.
+   * Precisa rodar enquanto o link assinado do Discord ainda vale (~24h). Falha num arquivo não
+   * impede os outros nem a criação do card.
+   */
+  async importAttachments(attachments: SourceAttachment[]): Promise<{ paths: string[]; copiedUrls: Set<string> } & AttachmentReport> {
+    const paths: string[] = [];
+    const copiedUrls = new Set<string>();
+    const copied: string[] = [];
+    const failed: string[] = [];
+    for (const a of attachments.slice(0, MAX_ATTACHMENTS)) {
+      try {
+        if (a.size && a.size > MAX_ATTACHMENT_BYTES) throw new Error(`maior que ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB`);
+        const res = await fetch(a.url, { signal: AbortSignal.timeout(30_000) });
+        if (!res.ok) throw new Error(`Discord respondeu ${res.status} (link vencido?)`);
+        const data = new Uint8Array(await res.arrayBuffer());
+        // Privado: o arquivo fica no armazenamento da Goalfy e é referenciado pelo caminho
+        // (permanente) no campo de anexo; a Goalfy gera o link de visualização a cada acesso.
+        // O conteúdo só passa pela memória do bot durante a cópia.
+        const raw = (await this.client.uploadFile(safeFileName(a.name), data, a.contentType ?? res.headers.get('content-type') ?? undefined)) as {
+          path?: string;
+        };
+        if (!raw?.path) throw new Error('a Goalfy não devolveu o caminho do arquivo');
+        paths.push(raw.path);
+        copiedUrls.add(a.url);
+        copied.push(a.name);
+      } catch (e) {
+        logger.warn(`Não consegui copiar o anexo "${a.name}" para a Goalfy: ${(e as Error).message}`);
+        failed.push(a.name);
+      }
+    }
+    for (const a of attachments.slice(MAX_ATTACHMENTS)) failed.push(a.name);
+    return { paths, copiedUrls, copied, failed };
+  }
+
+/**
+   * Acrescenta arquivos ao campo de anexo de um card já criado, mantendo os que já estão lá
+   * (mesmo formato do front: caminhos separados por vírgula).
+   */
+  async appendAttachments(cardId: string, attachments: SourceAttachment[]): Promise<AttachmentReport & { fieldName?: string }> {
+    const field = (await this.board.createForm()).fields.attachments;
+    if (!field) return { copied: [], failed: attachments.map((a) => a.name) };
+    const card = await this.get(cardId);
+    if (!card.initialForm) throw new Error('Não encontrei o formulário inicial deste card na Goalfy.');
+
+    const imported = await this.importAttachments(attachments);
+    if (imported.paths.length) {
+      const existing = card.initialForm.fields.find((f) => f.infoId === field.fieldInfoId);
+      const value = [...attachmentPaths(existing?.value), ...imported.paths].join(',');
+      if (existing?.id) await this.client.updateCardField(existing.id, value);
+      else await this.client.fillCardField(card.initialForm.id, cardId, field.fieldInfoId, value);
+    }
+    return { copied: imported.copied, failed: imported.failed, fieldName: field.name };
+  }
+
+  async create(input: NewCardInput): Promise<Card & { attachmentReport?: AttachmentReport }> {
     const form = await this.board.createForm();
     const values: FieldInputs = { ...input.values };
     if (form.fields.title) values[form.fields.title.fieldInfoId] = input.title;
     if (form.fields.discordLink && input.discordUrl) values[form.fields.discordLink.fieldInfoId] = input.discordUrl;
     if (form.fields.requester) values[form.fields.requester.fieldInfoId] = input.requester;
+
+    // Valida antes de copiar anexos: se algo for recusado, não sobe arquivo à toa.
+    const attachField = form.fields.attachments;
+    const pre = buildFieldValues(attachField ? form.allFields.filter((f) => f !== attachField) : form.allFields, values);
+    if (pre.problems.length) throw new InvalidFieldValuesError(pre.problems);
+
+    // Evidências vão para o campo de anexo. Sem esse campo no formulário não há onde guardar:
+    // o link do Discord fica na descrição (e vence em ~24h).
+    let attachmentReport: AttachmentReport | undefined;
+    if (attachField && input.attachments?.length) {
+      const imported = await this.importAttachments(input.attachments);
+      // Na descrição, o link do Discord (que vai vencer) vira uma referência ao anexo.
+      const descriptionId = form.fields.description?.fieldInfoId;
+      const description = descriptionId ? values[descriptionId] : undefined;
+      if (descriptionId && description) {
+        const note = new Map([...imported.copiedUrls].map((url) => [`: ${url}`, ` (no campo ${attachField.name} do card)`]));
+        values[descriptionId] = (Array.isArray(description) ? description : [description]).map((text) => replaceUrls(text, note));
+      }
+      if (imported.paths.length) values[attachField.fieldInfoId] = imported.paths;
+      attachmentReport = { copied: imported.copied, failed: imported.failed };
+    }
 
     const { fields, problems } = buildFieldValues(form.allFields, values);
     if (problems.length) throw new InvalidFieldValuesError(problems);
@@ -86,19 +213,21 @@ export class CardService {
     // Rastreabilidade: quem abriu e onde está a conversa, se o formulário não tiver campo para isso.
     const lines = [`Card aberto via Discord por ${input.requester}.`];
     if (input.discordUrl && !form.fields.discordLink) lines.push(`Tópico: ${input.discordUrl}`);
+    if (attachmentReport?.failed.length) {
+      lines.push(`Evidências que não consegui copiar para a Goalfy (veja no tópico): ${attachmentReport.failed.join(', ')}`);
+    }
     await this.comment(id, lines.join('\n')).catch((e) => logger.warn(`Não consegui comentar no card ${id}`, e));
 
-    return (
-      (await this.get(id).catch(() => undefined)) ?? {
-        id,
-        title: input.title,
-        responsibles: [],
-        tags: [],
-        phaseId: form.initialPhase.id,
-        phaseName: form.initialPhase.title,
-        phaseForms: [],
-      }
-    );
+    const card = (await this.get(id).catch(() => undefined)) ?? {
+      id,
+      title: input.title,
+      responsibles: [],
+      tags: [],
+      phaseId: input.phaseId ?? form.initialPhase.id,
+      phaseName: input.phaseId ? undefined : form.initialPhase.title,
+      phaseForms: [],
+    };
+    return { ...card, attachmentReport };
   }
 
   /**

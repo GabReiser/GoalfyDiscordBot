@@ -28,6 +28,7 @@ const ENV_FIELD: Record<LogicalField, keyof GoalfyConfig> = {
   discordLink: 'GOALFY_FIELD_DISCORD_LINK',
   ticketLink: 'GOALFY_FIELD_TICKET_LINK',
   requester: 'GOALFY_FIELD_REQUESTER',
+  attachments: 'GOALFY_FIELD_ATTACHMENTS',
 };
 
 /**
@@ -39,6 +40,7 @@ const ROLE_TYPES: Partial<Record<LogicalField, RegExp>> = {
   description: /text/,
   discordLink: /text|url|link/,
   requester: /^(shorttext|text|longtext)$/,
+  attachments: /attachment/,
 };
 
 /** Metadados do board (fases e formulário), com cache em memória. */

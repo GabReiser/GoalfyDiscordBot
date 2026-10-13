@@ -99,6 +99,7 @@ export const FIELD_ALIASES = {
   discordLink: ['discord', 'link do topico', 'topico'],
   ticketLink: ['ticket', 'n1', 'chamado'],
   requester: ['solicitante', 'reportado por', 'aberto por', 'requester'],
+  attachments: ['anexo', 'anexos', 'evidencia', 'evidencias', 'arquivo', 'arquivos', 'print', 'prints'],
 } as const;
 
 export type LogicalField = keyof typeof FIELD_ALIASES;

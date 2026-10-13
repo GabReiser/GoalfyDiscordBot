@@ -9,7 +9,7 @@ import {
   type StringSelectMenuInteraction,
 } from 'discord.js';
 import type { BotContext } from '../context.js';
-import { InvalidFieldValuesError } from '../goalfy/cards.js';
+import { InvalidFieldValuesError, type SourceAttachment } from '../goalfy/cards.js';
 import { type CreatePlan, matchOption, planCreate, RESPONSIBLE_FIELD_ID } from '../goalfy/formPlan.js';
 import type { Card, FormField } from '../goalfy/types.js';
 import { logger } from '../logger.js';
@@ -155,6 +155,8 @@ interface CreateDraft {
   /** Fases em que o card pode nascer (a primeira é a inicial do board) e a escolhida. */
   phases: { id: string; title: string }[];
   phaseId?: string;
+  /** Evidências da mensagem do tópico (copiadas para a Goalfy na criação). */
+  attachments: SourceAttachment[];
   at: number;
 }
 
@@ -262,6 +264,12 @@ async function prepareDraft(ctx: BotContext, thread: AnyThreadChannel | undefine
     ...suggestTexts({ description: form.fields.description }, plan.modal, topic),
   };
   const phases = (await ctx.board.creatablePhases().catch(() => [])).map((p) => ({ id: p.id, title: p.title }));
+
+  // Evidências: na criação, cada arquivo é copiado para a Goalfy e o link do Discord na
+  // descrição (que vence em ~24h) é trocado pela URL permanente.
+  const attachments: SourceAttachment[] = topic.message
+    ? [...topic.message.attachments.values()].map((a) => ({ name: a.name, url: a.url, contentType: a.contentType ?? undefined, size: a.size }))
+    : [];
   return {
     plan,
     values,
@@ -270,6 +278,7 @@ async function prepareDraft(ctx: BotContext, thread: AnyThreadChannel | undefine
     responsibleEmails: responsible?.emailByLabel,
     phases,
     phaseId: phases[0]?.id,
+    attachments,
     at: Date.now(),
   };
 }
@@ -451,6 +460,7 @@ async function createFromDraft(ctx: BotContext, interaction: ModalSubmitInteract
       discordUrl: thread?.url,
       // Fase inicial = não manda phaseId (a Goalfy usa a própria); outra = abre direto nela.
       phaseId: d.phaseId && d.phaseId !== d.phases[0]?.id ? d.phaseId : undefined,
+      attachments: d.attachments,
     });
     drafts.delete(draftKey(interaction.user.id, interaction.channelId));
 
@@ -477,6 +487,10 @@ async function createFromDraft(ctx: BotContext, interaction: ModalSubmitInteract
         .join(' · '),
       responsibleLabel && !responsibleNote ? `👤 **Responsável:** ${responsibleLabel}` : '',
       responsibleNote,
+      card.attachmentReport?.copied.length ? `📎 ${card.attachmentReport.copied.length} evidência(s) copiada(s) para a Goalfy (links que não vencem)` : '',
+      card.attachmentReport?.failed.length
+        ? `⚠️ Não consegui anexar: ${card.attachmentReport.failed.join(', ')} (continua no tópico)`
+        : '',
     ]
       .filter(Boolean)
       .join('\n');

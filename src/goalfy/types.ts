@@ -171,6 +171,8 @@ export interface Card {
   updatedAt?: string;
   /** Formulários já preenchidos por fase (`phasesHistory` do GET /cards/{id}). */
   phaseForms: PhaseForm[];
+  /** Formulário inicial do card (`form` do GET /cards/{id}): id e valores preenchidos. */
+  initialForm?: { id: string; fields: { id?: string; infoId: string; value: unknown }[] };
 }
 
 export interface PhaseForm {
@@ -220,6 +222,16 @@ export function toCard(raw: unknown): Card | undefined {
     createdAt: pick(src, 'createdAt'),
     updatedAt: pick(src, 'updatedAt'),
     phaseForms: toPhaseForms(src.phasesHistory),
+    initialForm: isObj(src.form) && pick(src.form, 'id')
+      ? {
+          id: pick(src.form, 'id')!,
+          fields: unwrapList(src.form.fields).flatMap((f) => {
+            if (!isObj(f)) return [];
+            const infoId = pick(f, 'infoId', 'fieldInfoId');
+            return infoId ? [{ id: pick(f, 'id'), infoId, value: f.value }] : [];
+          }),
+        }
+      : undefined,
   };
 }
 

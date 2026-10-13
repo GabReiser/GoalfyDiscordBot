@@ -63,6 +63,7 @@ const goalfySchema = z.object({
   GOALFY_FIELD_DISCORD_LINK: optional,
   GOALFY_FIELD_TICKET_LINK: optional,
   GOALFY_FIELD_REQUESTER: optional,
+  GOALFY_FIELD_ATTACHMENTS: optional,
   GOALFY_DONE_PHASES: csv,
   /** Opcional: e-mails de quem pode ser escolhido como responsável (padrão: todos os membros do board). */
   GOALFY_RESPONSIBLES: csv,
