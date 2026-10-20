@@ -1,48 +1,54 @@
 /**
- * /topicos: lista dos tópicos abertos de quem abriu (etiquetas, status, card na Goalfy).
+ * /topicos: lista enxuta dos tópicos de quem abriu, com filtros (abertos, sem resposta, com card…).
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { topicLine, topicsEmbed, type TopicItem } from '../src/discord/myTopics.js';
+import { applyFilter, topicLine, topicsView, type TopicItem } from '../src/discord/myTopics.js';
 import { Store } from '../src/store.js';
 
-const base: TopicItem = { threadId: '100', title: 'Erro ao salvar meta', createdAt: new Date('2026-10-18T12:00:00Z'), archived: false, tags: [] };
+const base: TopicItem = { threadId: '100', createdAt: new Date('2026-10-18T12:00:00Z'), archived: false, tags: [], finished: false, answered: true };
 
-describe('linha de cada tópico', () => {
-  it('mostra status, link do tópico, etiquetas, card com a fase e quando abriu', () => {
-    const line = topicLine({
-      ...base,
-      tags: ['Major', 'Card Criado'],
-      status: 'card',
-      card: { cardId: '42', phaseName: 'Em desenvolvimento', closed: false, url: 'https://app/board/B/cards/42' },
-    });
-    assert.match(line, /^📋 <#100> \*\*Erro ao salvar meta\*\*/);
-    assert.match(line, /🏷️ Major, Card Criado/);
-    assert.match(line, /\[#42\]\(https:\/\/app\/board\/B\/cards\/42\) · _Em desenvolvimento_/);
-    assert.match(line, /aberto <t:\d+:R>/);
+const triagem: TopicItem = { ...base, threadId: '1', status: 'triage', answered: false, tags: ['Atenção Especial'] };
+const comCard: TopicItem = { ...base, threadId: '2', status: 'card', card: { url: 'https://app/board/B/cards/uuid', phaseName: 'Em QA' } };
+const resolvido: TopicItem = { ...base, threadId: '3', status: 'resolved', finished: true, answered: undefined };
+const respondido: TopicItem = { ...base, threadId: '4', status: 'waiting' };
+const all = [triagem, comCard, resolvido, respondido];
+
+describe('linha de cada tópico (enxuta)', () => {
+  it('status, tópico, fase do card como link, etiquetas extras, sem resposta e idade', () => {
+    assert.match(topicLine(comCard), /^📋 <#2> · \[Em QA\]\(https:\/\/app\/board\/B\/cards\/uuid\) · <t:\d+:R>$/);
+    assert.match(topicLine(triagem), /^🔎 <#1> · Atenção Especial · 💬 sem resposta · <t:\d+:R>$/);
   });
 
-  it('sem card, sem etiqueta e arquivado ficam explícitos', () => {
-    const line = topicLine({ ...base, archived: true });
-    assert.match(line, /_\(arquivado\)_/);
-    assert.match(line, /_sem etiqueta_/);
-    assert.match(line, /_sem card_/);
+  it('não repete o título nem mostra o ID (UUID) do card', () => {
+    assert.ok(!topicLine(comCard).includes('uuid]'));
   });
 });
 
-describe('resumo', () => {
-  it('mais recentes primeiro e contagem com/sem card', () => {
-    const old = { ...base, threadId: '1', createdAt: new Date('2026-10-01T00:00:00Z') };
-    const recent = { ...base, threadId: '2', createdAt: new Date('2026-10-19T00:00:00Z'), card: { cardId: '9', phaseName: null, closed: false, url: 'u' } };
-    const e = topicsEmbed([old, recent], 'Ana', true).toJSON();
-    assert.ok(e.description!.indexOf('<#2>') < e.description!.indexOf('<#1>'));
-    assert.equal(e.title, '🧵 Seus tópicos abertos (2)');
-    assert.equal(e.footer?.text, '1 com card na Goalfy · 1 sem card');
+describe('filtros', () => {
+  const ids = (f: Parameters<typeof applyFilter>[1]) => applyFilter(all, f).map((t) => t.threadId);
+  it('em aberto tira resolvidos/encerrados', () => assert.deepEqual(ids('abertos'), ['1', '2', '4']));
+  it('sem resposta', () => assert.deepEqual(ids('sem_resposta'), ['1']));
+  it('com card', () => assert.deepEqual(ids('com_card'), ['2']));
+  it('encerrados', () => assert.deepEqual(ids('encerrados'), ['3']));
+  it('todos', () => assert.equal(ids('todos').length, 4));
+});
+
+describe('resposta', () => {
+  it('título com o filtro, rodapé com os totais e botões de filtro (o atual desabilitado)', () => {
+    const v = topicsView(all, 'abertos', 'ANA', 'Ana', true);
+    const e = v.embeds[0]!.toJSON();
+    assert.equal(e.title, '🧵 Seus tópicos · Em aberto (3)');
+    assert.match(e.footer!.text, /^3 em aberto · 1 sem resposta · 1 encerrado/);
+    const buttons = v.components[0]!.toJSON().components as { custom_id: string; disabled?: boolean }[];
+    assert.equal(buttons.length, 5);
+    assert.equal(buttons.find((b) => b.disabled)?.custom_id, 'topics:abertos:ANA');
   });
 
-  it('lista vazia e lista de outra pessoa', () => {
-    assert.match(topicsEmbed([], 'Ana', true).toJSON().description!, /Você não tem tópicos abertos/);
-    assert.equal(topicsEmbed([], 'Ana', false).toJSON().title, '🧵 Tópicos abertos de Ana (0)');
+  it('de outra pessoa e lista vazia', () => {
+    const e = topicsView([], 'sem_resposta', 'BIA', 'Bia', false).embeds[0]!.toJSON();
+    assert.equal(e.title, '🧵 Tópicos de Bia · Sem resposta (0)');
+    assert.match(e.description!, /Nenhum tópico neste filtro/);
   });
 });
 

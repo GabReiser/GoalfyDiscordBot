@@ -55,7 +55,7 @@ Card chega na fase final ──► ✅ Resolvido (entrega) ou ❌ Não procede (
 | `/card comentar texto [card]` | Comenta no card | Todos |
 | `/card vincular card` | Vincula o tópico a um card que já existe | Triagem |
 | `/triagem pendentes` | Tópicos ainda sem destino (regra 8 do processo) | Todos |
-| `/topicos [usuario] [publico]` | Seus tópicos abertos no fórum (ou os de outra pessoa): etiquetas, status, card na Goalfy com a fase e quando foi aberto. Inclui tópicos arquivados por inatividade que ainda não tiveram destino ou cujo card não chegou à fase final | Todos |
+| `/topicos [filtro] [usuario]` | Seus tópicos no fórum (ou os de outra pessoa), uma linha por tópico: status, fase do card na Goalfy (link), etiquetas extras, "sem resposta" e idade. Filtros em botões: Em aberto (padrão), Sem resposta, Com card, Encerrados, Todos. Só quem executa vê | Todos |
 | `/triagem relatorio [dias]` | Indicadores: abertos, cards gerados, resolvidos na triagem, tempo até destino, contagem por frente, tipo, origem e severidade | Todos |
 | `/triagem painel` | Reenvia o painel no tópico (útil para tópicos antigos) | Triagem |
 | `/goalfy status` | Diagnóstico: fases, formulário e campos mapeados | Admin do servidor |

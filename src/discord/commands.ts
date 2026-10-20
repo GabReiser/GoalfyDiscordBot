@@ -20,7 +20,7 @@ import { type Card, type FormField, toCards } from '../goalfy/types.js';
 import { logger } from '../logger.js';
 import { normalize, TOPIC_STATUS } from '../process.js';
 import { requestMove } from './move.js';
-import { openTopicsOf, topicsEmbed } from './myTopics.js';
+import { isTopicFilter, TOPIC_FILTERS, topicsOf, topicsView } from './myTopics.js';
 import { reconnectLink, reconnectMessage } from './sync.js';
 import { linkExistingCard, parseCardRef, postTriagePanel, startCardFlow } from './triage.js';
 import { planCreate } from '../goalfy/formPlan.js';
@@ -103,10 +103,15 @@ const goalfyCommand = new SlashCommandBuilder()
 
 const topicsCommand = new SlashCommandBuilder()
   .setName('topicos')
-  .setDescription('Seus tópicos abertos no fórum de N2/N3, com etiquetas e card na Goalfy')
+  .setDescription('Seus tópicos no fórum de N2/N3, com etiquetas e card na Goalfy (só você vê)')
   .setContexts(InteractionContextType.Guild)
-  .addUserOption((o) => o.setName('usuario').setDescription('Ver os tópicos de outra pessoa (padrão: você)'))
-  .addBooleanOption((o) => o.setName('publico').setDescription('Mostrar para todos no canal'));
+  .addStringOption((o) =>
+    o
+      .setName('filtro')
+      .setDescription('Padrão: em aberto')
+      .addChoices(...Object.entries(TOPIC_FILTERS).map(([value, name]) => ({ name, value }))),
+  )
+  .addUserOption((o) => o.setName('usuario').setDescription('Ver os tópicos de outra pessoa (padrão: você)'));
 
 const sendToCardMenu = new ContextMenuCommandBuilder()
   .setName('Enviar ao card Goalfy')
@@ -355,11 +360,11 @@ async function handleTriage(ctx: BotContext, interaction: ChatInputCommandIntera
 
 async function handleTopics(ctx: BotContext, interaction: ChatInputCommandInteraction) {
   const who = interaction.options.getUser('usuario') ?? interaction.user;
-  const publico = interaction.options.getBoolean('publico') ?? false;
-  await interaction.deferReply({ flags: publico ? undefined : MessageFlags.Ephemeral });
-  const items = await openTopicsOf(ctx, who.id);
-  const self = who.id === interaction.user.id;
-  await interaction.editReply({ embeds: [topicsEmbed(items, who.displayName, self)], allowedMentions: { parse: [] } });
+  const filter = interaction.options.getString('filtro');
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const items = await topicsOf(ctx, who.id, true);
+  const view = topicsView(items, isTopicFilter(filter) ? filter : 'abertos', who.id, who.displayName, who.id === interaction.user.id);
+  await interaction.editReply(view);
 }
 
 // ── /goalfy status ──────────────────────────────────────────────────────────

@@ -1,56 +1,134 @@
 /**
- * /topicos: tópicos abertos de uma pessoa no fórum de N2/N3 (padrão: quem executa o comando),
- * com etiquetas, status do processo e o card vinculado na Goalfy.
+ * /topicos: tópicos de uma pessoa no fórum de N2/N3 (padrão: quem executa o comando), com
+ * filtros (abertos, sem resposta, com card, encerrados, todos). A resposta é sempre efêmera.
  *
- * "Aberto" = tópico ativo no Discord, ou que o processo ainda acompanha (sem destino, ou com card
- * ainda fora da fase final), mesmo que o Discord o tenha arquivado por inatividade.
+ * "Encerrado" = resolvido / não procede (status do bot ou tag do fórum) ou card na fase final.
+ * "Respondido" = alguém além de quem abriu (e além de bots) já escreveu no tópico.
+ * Tópicos arquivados pelo Discord por inatividade entram se o processo ainda os acompanha.
  */
-import { type AnyThreadChannel, EmbedBuilder, time, TimestampStyles } from 'discord.js';
+import {
+  ActionRowBuilder,
+  type AnyThreadChannel,
+  ButtonBuilder,
+  type ButtonInteraction,
+  ButtonStyle,
+  EmbedBuilder,
+  MessageFlags,
+  time,
+  TimestampStyles,
+} from 'discord.js';
 import type { BotContext } from '../context.js';
-import { TOPIC_STATUS, type TopicStatus } from '../process.js';
-import type { CardLink } from '../store.js';
-import { forumTagNames } from './topics.js';
-import { COLORS, truncate } from './ui.js';
+import { logger } from '../logger.js';
+import { normalize, TOPIC_STATUS, type TopicStatus } from '../process.js';
+import { forumTagNames, statusTagNames } from './topics.js';
+import { COLORS, errorEmbed, truncate } from './ui.js';
 
-const MAX_LINES = 20;
+const MAX_LINES = 25;
+
+export const TOPIC_FILTERS = {
+  abertos: 'Em aberto',
+  sem_resposta: 'Sem resposta',
+  com_card: 'Com card',
+  encerrados: 'Encerrados',
+  todos: 'Todos',
+} as const;
+export type TopicFilter = keyof typeof TOPIC_FILTERS;
+export const isTopicFilter = (v: unknown): v is TopicFilter => typeof v === 'string' && v in TOPIC_FILTERS;
 
 export interface TopicItem {
   threadId: string;
-  title: string;
   createdAt: Date | null;
   archived: boolean;
+  /** Etiquetas do fórum que não são de status (o status já aparece no emoji). */
   tags: string[];
   status?: TopicStatus;
-  card?: Pick<CardLink, 'cardId' | 'phaseName' | 'closed'> & { url: string };
+  finished: boolean;
+  /** undefined = não verificado (tópico encerrado). */
+  answered?: boolean;
+  card?: { url: string; phaseName: string | null };
 }
 
-/** Uma linha por tópico: link, título, etiquetas, card (com a fase) e quando foi aberto. */
+export function applyFilter(items: TopicItem[], filter: TopicFilter): TopicItem[] {
+  switch (filter) {
+    case 'abertos':
+      return items.filter((t) => !t.finished);
+    case 'sem_resposta':
+      return items.filter((t) => !t.finished && t.answered === false);
+    case 'com_card':
+      return items.filter((t) => !t.finished && t.card);
+    case 'encerrados':
+      return items.filter((t) => t.finished);
+    case 'todos':
+      return items;
+  }
+}
+
+/** Uma linha por tópico: status · tópico · card (fase) · etiquetas extras · sem resposta · idade. */
 export function topicLine(t: TopicItem): string {
-  const status = t.status ? `${TOPIC_STATUS[t.status].emoji} ` : '';
-  const head = `${status}<#${t.threadId}> **${truncate(t.title, 70)}**${t.archived ? ' _(arquivado)_' : ''}`;
-  const tags = t.tags.length ? `🏷️ ${t.tags.join(', ')}` : '🏷️ _sem etiqueta_';
-  const card = t.card
-    ? `📋 [#${t.card.cardId}](${t.card.url})${t.card.phaseName ? ` · _${t.card.phaseName}_` : ''}${t.card.closed ? ' (encerrado)' : ''}`
-    : '📋 _sem card_';
-  const opened = t.createdAt ? `aberto ${time(t.createdAt, TimestampStyles.RelativeTime)}` : '';
-  return `${head}\n${[tags, card, opened].filter(Boolean).join(' · ')}`;
+  const parts = [`${t.status ? TOPIC_STATUS[t.status].emoji : '▫️'} <#${t.threadId}>`];
+  if (t.card) parts.push(`[${t.card.phaseName ?? 'card'}](${t.card.url})`);
+  if (t.tags.length) parts.push(t.tags.join(', '));
+  if (t.answered === false && !t.finished) parts.push('💬 sem resposta');
+  if (t.archived) parts.push('_arquivado_');
+  if (t.createdAt) parts.push(time(t.createdAt, TimestampStyles.RelativeTime));
+  return parts.join(' · ');
 }
 
-/** Mais recentes primeiro; no máximo MAX_LINES, avisando quantos ficaram de fora. */
-export function topicsEmbed(items: TopicItem[], whoName: string, self: boolean): EmbedBuilder {
-  const sorted = [...items].sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
-  const shown = sorted.slice(0, MAX_LINES).map(topicLine);
-  if (sorted.length > MAX_LINES) shown.push(`…e mais ${sorted.length - MAX_LINES}.`);
-  const withCard = items.filter((t) => t.card).length;
-  return new EmbedBuilder()
+export function topicsView(all: TopicItem[], filter: TopicFilter, ownerId: string, whoName: string, self: boolean) {
+  const items = applyFilter(all, filter).sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
+  const lines = items.slice(0, MAX_LINES).map(topicLine);
+  if (items.length > MAX_LINES) lines.push(`…e mais ${items.length - MAX_LINES}.`);
+  const open = all.filter((t) => !t.finished);
+  const embed = new EmbedBuilder()
     .setColor(items.length ? COLORS.brand : COLORS.done)
-    .setTitle(`🧵 ${self ? 'Seus tópicos abertos' : `Tópicos abertos de ${whoName}`} (${items.length})`)
-    .setDescription(truncate(shown.join('\n\n') || (self ? 'Você não tem tópicos abertos no fórum de N2/N3. 🎉' : 'Nenhum tópico aberto.'), 4096))
-    .setFooter({ text: `${withCard} com card na Goalfy · ${items.length - withCard} sem card` });
+    .setTitle(`🧵 ${self ? 'Seus tópicos' : `Tópicos de ${whoName}`} · ${TOPIC_FILTERS[filter]} (${items.length})`)
+    .setDescription(truncate(lines.join('\n') || 'Nenhum tópico neste filtro. 🎉', 4096))
+    .setFooter({
+      text: `${open.length} em aberto · ${open.filter((t) => t.answered === false).length} sem resposta · ${all.length - open.length} encerrado(s)\n🔎 triagem · ⏳ aguardando info · 📋 card criado · ✅ resolvido · ❌ não procede`,
+    });
+  const buttons = (Object.keys(TOPIC_FILTERS) as TopicFilter[]).map((f) =>
+    new ButtonBuilder()
+      .setCustomId(`topics:${f}:${ownerId}`)
+      .setLabel(TOPIC_FILTERS[f])
+      .setStyle(f === filter ? ButtonStyle.Primary : ButtonStyle.Secondary)
+      .setDisabled(f === filter),
+  );
+  return { embeds: [embed], components: [new ActionRowBuilder<ButtonBuilder>().addComponents(buttons)] };
 }
+
+/** Alguém além de quem abriu (e além de bots) escreveu no tópico? */
+async function wasAnswered(thread: AnyThreadChannel): Promise<boolean | undefined> {
+  try {
+    const messages = await thread.messages.fetch({ limit: 100 });
+    return messages.some((m) => !m.author.bot && m.author.id !== thread.ownerId);
+  } catch {
+    return undefined;
+  }
+}
+
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (next < items.length) {
+        const i = next++;
+        out[i] = await fn(items[i]!);
+      }
+    }),
+  );
+  return out;
+}
+
+// Trocar de filtro nos botões não refaz as buscas no Discord por 1 minuto.
+const cache = new Map<string, { at: number; items: TopicItem[] }>();
+const CACHE_MS = 60_000;
 
 /** Busca no Discord (tópicos ativos) + no banco (acompanhados, mesmo arquivados). */
-export async function openTopicsOf(ctx: BotContext, ownerId: string): Promise<TopicItem[]> {
+export async function topicsOf(ctx: BotContext, ownerId: string, fresh = false): Promise<TopicItem[]> {
+  const hit = cache.get(ownerId);
+  if (!fresh && hit && Date.now() - hit.at < CACHE_MS) return hit.items;
+
   const guild = await ctx.client.guilds.fetch(ctx.config.DISCORD_GUILD_ID);
   const forums = new Set(ctx.config.DISCORD_FORUM_CHANNEL_IDS);
   const threads = new Map<string, AnyThreadChannel>();
@@ -65,16 +143,40 @@ export async function openTopicsOf(ctx: BotContext, ownerId: string): Promise<To
     if (ch?.isThread() && forums.has(ch.parentId ?? '')) threads.set(ch.id, ch);
   }
 
-  return [...threads.values()].map((t) => {
+  const tagNames = statusTagNames(ctx);
+  const statusTags = new Set(Object.values(tagNames).filter((n): n is string => !!n).map(normalize));
+  const closingTags = new Set([tagNames.resolved, tagNames.rejected].filter((n): n is string => !!n).map(normalize));
+
+  const items = await mapLimit([...threads.values()], 5, async (t): Promise<TopicItem> => {
     const link = ctx.store.byThread(t.id);
+    const status = ctx.store.topic(t.id)?.status;
+    const tags = forumTagNames(t);
+    const finished =
+      status === 'resolved' || status === 'rejected' || !!link?.closed || tags.some((n) => closingTags.has(normalize(n)));
     return {
       threadId: t.id,
-      title: t.name,
       createdAt: t.createdAt,
       archived: !!t.archived,
-      tags: forumTagNames(t),
-      status: ctx.store.topic(t.id)?.status,
-      card: link && { cardId: link.cardId, phaseName: link.phaseName, closed: link.closed, url: ctx.board.cardUrl(link.cardId) },
+      tags: tags.filter((n) => !statusTags.has(normalize(n))),
+      status,
+      finished,
+      answered: finished ? undefined : await wasAnswered(t),
+      card: link && { url: ctx.board.cardUrl(link.cardId), phaseName: link.phaseName },
     };
   });
+  cache.set(ownerId, { at: Date.now(), items });
+  return items;
+}
+
+/** Botões de filtro da lista (a mensagem é efêmera: só quem executou vê e clica). */
+export async function onTopicsButton(ctx: BotContext, interaction: ButtonInteraction, filter: string, ownerId: string) {
+  try {
+    await interaction.deferUpdate();
+    const who = await ctx.client.users.fetch(ownerId);
+    const items = await topicsOf(ctx, ownerId);
+    await interaction.editReply(topicsView(items, isTopicFilter(filter) ? filter : 'abertos', ownerId, who.displayName, ownerId === interaction.user.id));
+  } catch (e) {
+    logger.warn('Filtro de /topicos falhou', e);
+    await interaction.followUp({ embeds: [errorEmbed(e)], flags: MessageFlags.Ephemeral }).catch(() => {});
+  }
 }

@@ -2,6 +2,7 @@ import { ActivityType, Client, Events, GatewayIntentBits, type Interaction, Mess
 import { loadBotConfig } from './config.js';
 import type { BotContext } from './context.js';
 import { onAttachToCard, onAutocomplete, onCardButton, onCardSelect, onChatInput, onSendToCard } from './discord/commands.js';
+import { onTopicsButton } from './discord/myTopics.js';
 import { startSync } from './discord/sync.js';
 import {
   onClassifyCancel,
@@ -82,6 +83,7 @@ async function route(interaction: Interaction) {
       if (action === 'next') return onClassifyNext(ctx, interaction);
       if (action === 'cancel') return onClassifyCancel(interaction);
     }
+    if (scope === 'topics') return onTopicsButton(ctx, interaction, action, arg[0]!);
     if (scope === 'card' && action === 'fill') return onFillAndMove(interaction, arg[0]!);
     if (scope === 'card') return onCardButton(ctx, interaction, action, arg);
   }
