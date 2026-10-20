@@ -20,6 +20,7 @@ import { type Card, type FormField, toCards } from '../goalfy/types.js';
 import { logger } from '../logger.js';
 import { normalize, TOPIC_STATUS } from '../process.js';
 import { requestMove } from './move.js';
+import { openTopicsOf, topicsEmbed } from './myTopics.js';
 import { reconnectLink, reconnectMessage } from './sync.js';
 import { linkExistingCard, parseCardRef, postTriagePanel, startCardFlow } from './triage.js';
 import { planCreate } from '../goalfy/formPlan.js';
@@ -100,6 +101,13 @@ const goalfyCommand = new SlashCommandBuilder()
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
   .addSubcommand((s) => s.setName('status').setDescription('Board, fases e campos detectados'));
 
+const topicsCommand = new SlashCommandBuilder()
+  .setName('topicos')
+  .setDescription('Seus tópicos abertos no fórum de N2/N3, com etiquetas e card na Goalfy')
+  .setContexts(InteractionContextType.Guild)
+  .addUserOption((o) => o.setName('usuario').setDescription('Ver os tópicos de outra pessoa (padrão: você)'))
+  .addBooleanOption((o) => o.setName('publico').setDescription('Mostrar para todos no canal'));
+
 const sendToCardMenu = new ContextMenuCommandBuilder()
   .setName('Enviar ao card Goalfy')
   .setType(ApplicationCommandType.Message)
@@ -110,7 +118,7 @@ const attachToCardMenu = new ContextMenuCommandBuilder()
   .setType(ApplicationCommandType.Message)
   .setContexts(InteractionContextType.Guild);
 
-export const commandData = [cardCommand, triageCommand, goalfyCommand, sendToCardMenu, attachToCardMenu].map((c) => c.toJSON());
+export const commandData = [cardCommand, triageCommand, topicsCommand, goalfyCommand, sendToCardMenu, attachToCardMenu].map((c) => c.toJSON());
 
 type MessageAttachments = MessageContextMenuCommandInteraction['targetMessage']['attachments'];
 
@@ -343,6 +351,17 @@ async function handleTriage(ctx: BotContext, interaction: ChatInputCommandIntera
   }
 }
 
+// ── /topicos ────────────────────────────────────────────────────────────────
+
+async function handleTopics(ctx: BotContext, interaction: ChatInputCommandInteraction) {
+  const who = interaction.options.getUser('usuario') ?? interaction.user;
+  const publico = interaction.options.getBoolean('publico') ?? false;
+  await interaction.deferReply({ flags: publico ? undefined : MessageFlags.Ephemeral });
+  const items = await openTopicsOf(ctx, who.id);
+  const self = who.id === interaction.user.id;
+  await interaction.editReply({ embeds: [topicsEmbed(items, who.displayName, self)], allowedMentions: { parse: [] } });
+}
+
 // ── /goalfy status ──────────────────────────────────────────────────────────
 
 async function handleGoalfy(ctx: BotContext, interaction: ChatInputCommandInteraction) {
@@ -405,6 +424,7 @@ export async function onChatInput(ctx: BotContext, interaction: ChatInputCommand
   try {
     if (interaction.commandName === 'card') await handleCard(ctx, interaction);
     else if (interaction.commandName === 'triagem') await handleTriage(ctx, interaction);
+    else if (interaction.commandName === 'topicos') await handleTopics(ctx, interaction);
     else if (interaction.commandName === 'goalfy') await handleGoalfy(ctx, interaction);
   } catch (e) {
     logger.warn(`/${interaction.commandName} falhou`, e);

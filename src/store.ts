@@ -235,6 +235,19 @@ export class Store {
     ).map(toTopic);
   }
 
+  /** Tópicos de quem abriu que o processo ainda acompanha: sem destino, ou com card fora da fase final. */
+  trackedTopicsOf(ownerId: string): string[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT t.thread_id FROM topics t LEFT JOIN card_links l ON l.thread_id = t.thread_id
+           WHERE t.owner_id = ? AND (t.destination_at IS NULL OR l.closed = 0)
+           ORDER BY t.opened_at DESC`,
+        )
+        .all(ownerId) as Row[]
+    ).map((r) => String(r.thread_id));
+  }
+
   /** Tópicos sem destino há mais de `hours` e não lembrados nesse intervalo. */
   staleTopics(hours: number): Topic[] {
     const cutoff = new Date(Date.now() - hours * 3_600_000).toISOString();
