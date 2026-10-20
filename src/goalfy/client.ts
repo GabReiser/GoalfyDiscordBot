@@ -199,17 +199,22 @@ export class GoalfyClient {
 
   // ── Arquivos ──────────────────────────────────────────────────────────────
   /**
-   * Envia um arquivo (privado) para o armazenamento da Goalfy, o mesmo upload do front.
+   * Envia um arquivo (privado) para o armazenamento da Goalfy, na organização DONA DO BOARD.
    * Retorna `{ url, path }`: `path` (`<uuid>/<nome>`) é permanente e é o que vai no campo de
    * anexo; `url` é um link assinado que vence em 15 min.
+   *
+   * Por que /public/files/upload/{boardId} (a mesma família que o front usa para anexos):
+   * o card procura o anexo em `organizations/<org do board>/…`. Já /files/upload grava em
+   * `organizations/<org do token>/…`, e quando o usuário do token está em outra organização
+   * (ex.: "Goalfy Bot") o anexo fica "inválido" no card.
    * Obs.: /files/uploadPublic deixaria o arquivo aberto a quem tiver o link (evitado: prints têm
    * dados de cliente); /files/download (importar por URL) exigiria papel ADMIN na organização.
    */
-  async uploadFile(fileName: string, data: Uint8Array, contentType = 'application/octet-stream'): Promise<unknown> {
+  async uploadFile(boardId: string, fileName: string, data: Uint8Array, contentType = 'application/octet-stream'): Promise<unknown> {
     const form = new FormData();
     form.append('file', new Blob([data], { type: contentType }), fileName);
     form.append('fileName', fileName);
-    const route = '/files/upload';
+    const route = `/public/files/upload/${enc(boardId)}`;
     const res = await fetch(`${this.baseUrl.replace(/\/$/, '')}${route}`, {
       method: 'POST',
       headers: { Authorization: `Token ${this.token}`, Accept: 'application/json' },

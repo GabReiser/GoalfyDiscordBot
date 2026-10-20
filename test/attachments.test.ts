@@ -68,8 +68,9 @@ describe('evidências na criação do card', () => {
     });
 
     const upload = calls.find((c) => c.op === 'upload')!;
-    assert.equal(upload.args[0], 'print_tela.png');
-    assert.equal(upload.args.length, 3, 'sem flag de público: upload privado');
+    assert.equal(upload.args[0], 'B1', 'upload na organização DONA DO BOARD (não na do token): é onde o card procura o anexo');
+    assert.equal(upload.args[1], 'print_tela.png');
+    assert.equal(upload.args.length, 4, 'sem flag de público: upload privado');
 
     const create = calls.find((c) => c.op === 'create')!;
     const values = Object.fromEntries((create.args[1] as { fieldInfoId: string; value: unknown }[]).map((f) => [f.fieldInfoId, f.value]));

@@ -138,7 +138,7 @@ export class CardService {
         // Privado: o arquivo fica no armazenamento da Goalfy e é referenciado pelo caminho
         // (permanente) no campo de anexo; a Goalfy gera o link de visualização a cada acesso.
         // O conteúdo só passa pela memória do bot durante a cópia.
-        const raw = (await this.client.uploadFile(safeFileName(a.name), data, a.contentType ?? res.headers.get('content-type') ?? undefined)) as {
+        const raw = (await this.client.uploadFile(this.board.boardId, safeFileName(a.name), data, a.contentType ?? res.headers.get('content-type') ?? undefined)) as {
           path?: string;
         };
         if (!raw?.path) throw new Error('a Goalfy não devolveu o caminho do arquivo');
