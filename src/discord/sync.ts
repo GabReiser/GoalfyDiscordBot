@@ -5,6 +5,7 @@ import { type Card, commentText, isFilled, type Phase, parseApiDate, toComments 
 import { logger } from '../logger.js';
 import { BOT_COMMENT_PREFIX } from '../process.js';
 import type { CardLink } from '../store.js';
+import { mentionResolver, renderMentions } from './mentions.js';
 import { applyPhaseTag, closeThread, setTopicStatus } from './topics.js';
 import { COLORS, truncate } from './ui.js';
 
@@ -86,13 +87,19 @@ async function syncComments(ctx: BotContext, link: CardLink) {
 
   const thread = await fetchThread(ctx, link.threadId);
   if (!thread) return;
+  const resolve = mentionResolver(ctx);
   for (const c of toPost) {
+    // Menções da Goalfy (@{{"id"}}) viram marcação real no Discord quando a pessoa é encontrada.
+    // Menção dentro de embed não notifica: quem foi mencionado vai no conteúdo da mensagem.
+    const rendered = await renderMentions(c.text, resolve);
     await thread.send({
+      content: rendered.userIds.length ? rendered.userIds.map((id) => `<@${id}>`).join(' ') : undefined,
+      allowedMentions: { users: rendered.userIds, roles: [], parse: [] },
       embeds: [
         new EmbedBuilder()
           .setColor(COLORS.brand)
           .setAuthor({ name: `💬 ${c.author ?? 'Goalfy'} comentou no card` })
-          .setDescription(truncate(c.text, 4000))
+          .setDescription(truncate(rendered.text, 4000))
           .setURL(ctx.board.cardUrl(link.cardId))
           .setTimestamp(parseApiDate(c.createdAt) ?? new Date()),
       ],
