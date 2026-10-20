@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { BotContext } from '../src/context.js';
-import { syncCard } from '../src/discord/sync.js';
+import { reconnectLink, resetUnreachable, syncCard } from '../src/discord/sync.js';
 import { BoardService } from '../src/goalfy/board.js';
 import { CardService } from '../src/goalfy/cards.js';
 import { type GoalfyClient, GoalfyError } from '../src/goalfy/client.js';
@@ -44,12 +44,28 @@ function setup(opts: { status?: number; config?: Record<string, unknown> } = {})
 }
 
 describe('card inacessível no ambiente atual', () => {
-  it('403 (resposta da Goalfy para card inexistente): encerra só após 3 tentativas', async () => {
+  it('403 passageiro (dono do token saiu e voltou ao board): não desconecta o tópico', async () => {
+    resetUnreachable();
     const { ctx, store, sent } = setup({ status: 403 });
-    await syncCard(ctx, 'c1');
-    await syncCard(ctx, 'c1');
-    assert.equal(store.byCard('c1')?.closed, false, 'ainda tenta: 403 pode ser permissão passageira');
-    await syncCard(ctx, 'c1');
+    for (let i = 0; i < 10; i++) await syncCard(ctx, 'c1');
+    assert.equal(store.byCard('c1')?.closed, false, '10 falhas em poucos minutos: segue tentando');
+    assert.equal(sent.length, 0);
+  });
+
+  it('403 por mais de 6h: encerra e avisa no tópico', async () => {
+    resetUnreachable();
+    const { ctx, store, sent } = setup({ status: 403 });
+    const realNow = Date.now;
+    let now = realNow();
+    Date.now = () => now;
+    try {
+      await syncCard(ctx, 'c1');
+      await syncCard(ctx, 'c1');
+      now += 6 * 60 * 60_000 + 1;
+      await syncCard(ctx, 'c1');
+    } finally {
+      Date.now = realNow;
+    }
     assert.equal(store.byCard('c1')?.closed, true);
     assert.equal(sent.length, 1);
     assert.match(sent[0]!, /Não consigo mais acessar o card/);
@@ -58,6 +74,27 @@ describe('card inacessível no ambiente atual', () => {
   it('404: encerra na hora', async () => {
     const { ctx, store } = setup({ status: 404 });
     await syncCard(ctx, 'c1');
+    assert.equal(store.byCard('c1')?.closed, true);
+  });
+});
+
+describe('reconectar tópico desconectado', () => {
+  it('card acessível de novo e em andamento: volta a ser acompanhado', async () => {
+    const { ctx, store } = setup();
+    store.updatePhase('c1', 'p1', 'Backlog', true);
+    assert.equal(await reconnectLink(ctx, 'c1'), 'reopened');
+    assert.equal(store.byCard('c1')?.closed, false);
+  });
+
+  it('vínculo que não estava encerrado: nada a fazer', async () => {
+    const { ctx } = setup();
+    assert.equal(await reconnectLink(ctx, 'c1'), 'open');
+  });
+
+  it('card ainda inacessível: avisa com erro e continua encerrado', async () => {
+    const { ctx, store } = setup({ status: 403 });
+    store.updatePhase('c1', 'p1', 'Backlog', true);
+    await assert.rejects(reconnectLink(ctx, 'c1'));
     assert.equal(store.byCard('c1')?.closed, true);
   });
 });

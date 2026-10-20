@@ -20,6 +20,7 @@ import { type Card, type FormField, toCards } from '../goalfy/types.js';
 import { logger } from '../logger.js';
 import { normalize, TOPIC_STATUS } from '../process.js';
 import { requestMove } from './move.js';
+import { reconnectLink, reconnectMessage } from './sync.js';
 import { linkExistingCard, parseCardRef, postTriagePanel, startCardFlow } from './triage.js';
 import { planCreate } from '../goalfy/formPlan.js';
 import { checkDiscordSetup } from './setup.js';
@@ -489,6 +490,11 @@ export async function onCardButton(ctx: BotContext, interaction: ButtonInteracti
       const original = interaction.message.embeds[0]?.description;
       if (original && interaction.channel?.isThread()) view.embeds[0]!.setDescription(original);
       await interaction.editReply(view);
+      // Tópico desconectado (ex.: o bot tinha perdido o acesso ao card): "Atualizar" reconecta.
+      const reconnected = await reconnectLink(ctx, arg[0]!);
+      if (reconnected === 'reopened' || reconnected === 'final') {
+        await interaction.followUp({ flags: MessageFlags.Ephemeral, embeds: [okEmbed(reconnectMessage[reconnected])] });
+      }
     } else if (action === 'list') {
       const [page, phaseId, ...search] = arg;
       await interaction.deferUpdate();

@@ -100,9 +100,19 @@ async function syncComments(ctx: BotContext, link: CardLink) {
   }
 }
 
-/** Falhas seguidas de acesso por card (403), antes de encerrar o acompanhamento. */
-const unreachable = new Map<string, number>();
-const MAX_UNREACHABLE = 3;
+/**
+ * Falhas seguidas de acesso por card (403): quantas e desde quando. Um 403 costuma ser
+ * passageiro (ex.: o dono do token saiu e voltou ao board), então o bot só desiste depois de
+ * o card ficar inacessível por um bom tempo, e não após poucos minutos.
+ */
+const unreachable = new Map<string, { count: number; since: number }>();
+const MIN_UNREACHABLE_ATTEMPTS = 3;
+const MIN_UNREACHABLE_MS = 6 * 60 * 60_000;
+
+/** Para testes: esquece as falhas registradas. */
+export function resetUnreachable() {
+  unreachable.clear();
+}
 
 async function syncLink(ctx: BotContext, link: CardLink, opts: { by?: string; comments?: boolean }) {
   let card;
@@ -110,12 +120,18 @@ async function syncLink(ctx: BotContext, link: CardLink, opts: { by?: string; co
     card = await ctx.cards.get(link.cardId);
   } catch (e) {
     // A Goalfy responde 403 "Card não encontrado ou você não possui acesso" também para card
-    // inexistente. Um 403 pode ser passageiro (permissão ajustada), então só desiste após algumas vezes.
+    // inexistente. Como pode ser passageiro, o 403 só encerra após algumas tentativas E 6h sem acesso;
+    // o 404 (excluído) encerra na hora.
     if (e instanceof GoalfyError && (e.status === 404 || e.status === 403)) {
-      const failures = (unreachable.get(link.cardId) ?? 0) + 1;
-      unreachable.set(link.cardId, failures);
-      if (e.status === 403 && failures < MAX_UNREACHABLE) {
-        logger.warn(`Sem acesso ao card ${link.cardId} (403, tentativa ${failures}/${MAX_UNREACHABLE})`);
+      const prev = unreachable.get(link.cardId);
+      const state = { count: (prev?.count ?? 0) + 1, since: prev?.since ?? Date.now() };
+      unreachable.set(link.cardId, state);
+      const forMs = Date.now() - state.since;
+      if (e.status === 403 && (state.count < MIN_UNREACHABLE_ATTEMPTS || forMs < MIN_UNREACHABLE_MS)) {
+        // Avisa na 1ª falha e depois a cada ~hora, para não encher o log a cada sincronização.
+        if (state.count === 1 || state.count % 120 === 0) {
+          logger.warn(`Sem acesso ao card ${link.cardId} (403) há ${Math.round(forMs / 60_000)} min; sigo tentando`);
+        }
         return;
       }
       unreachable.delete(link.cardId);
@@ -136,6 +152,36 @@ async function syncLink(ctx: BotContext, link: CardLink, opts: { by?: string; co
   if (changed) await applyPhaseChange(ctx, link, phase, { by: opts.by, card });
   if (opts.comments ?? ctx.config.SYNC_COMMENTS) await syncComments(ctx, link);
 }
+
+/**
+ * Reconecta um tópico cujo acompanhamento foi encerrado (ex.: o bot perdeu o acesso ao card).
+ *  - card em andamento → volta a ser acompanhado ("reopened");
+ *  - card que chegou à fase final enquanto estava desconectado → o tópico recebe o desfecho
+ *    (✅ entregue / ❌ cancelado) que tinha perdido ("final");
+ *  - vínculo que não estava encerrado → nada a fazer ("open").
+ * Lança erro se o card continuar inacessível.
+ */
+export async function reconnectLink(ctx: BotContext, cardId: string): Promise<'reopened' | 'final' | 'open' | 'none'> {
+  const link = ctx.store.byCard(cardId);
+  if (!link) return 'none';
+  if (!link.closed) return 'open';
+  const card = await ctx.cards.get(cardId);
+  const phase = await ctx.board.phaseOf(card);
+  unreachable.delete(cardId);
+  if (phase && ctx.board.isDone(phase)) {
+    if (phase.id !== link.phaseId) await applyPhaseChange(ctx, link, phase, { card });
+    return 'final';
+  }
+  ctx.store.reopenLink(cardId);
+  ctx.store.updatePhase(cardId, phase?.id ?? link.phaseId, phase?.title ?? link.phaseName, false);
+  logger.info(`Tópico ${link.threadId} reconectado ao card #${cardId}`);
+  return 'reopened';
+}
+
+export const reconnectMessage: Record<'reopened' | 'final', string> = {
+  reopened: '🔗 Reconectado: este tópico voltou a receber as mudanças de fase e os comentários do card.',
+  final: 'Este card já está numa fase final; o tópico foi atualizado com o desfecho.',
+};
 
 const locks = new Map<string, Promise<void>>();
 

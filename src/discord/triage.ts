@@ -15,7 +15,7 @@ import type { Card, FormField } from '../goalfy/types.js';
 import { logger } from '../logger.js';
 import { FIELD_ALIASES, type LogicalField, normalize, SEVERITY_TAGS, TOPIC_STATUS, typeFront } from '../process.js';
 import { missingSections, parseTopic, type ParsedTopic, TEMPLATE_HINT } from '../topicTemplate.js';
-import { primeComments } from './sync.js';
+import { primeComments, reconnectLink } from './sync.js';
 import { applyPhaseTag, closeThread, forumTagNames, isMonitoredForum, requireTriage, setTopicStatus } from './topics.js';
 import {
   cardActions,
@@ -537,7 +537,13 @@ export function parseCardRef(ref: string): string | undefined {
 export async function linkExistingCard(ctx: BotContext, thread: AnyThreadChannel, ref: string, userId: string): Promise<string> {
   const cardId = parseCardRef(ref);
   if (!cardId) throw new Error('Não entendi o card. Informe o ID (ex.: 12345) ou o link.');
-  if (ctx.store.byThread(thread.id)) throw new Error('Este tópico já está vinculado a um card.');
+  const current = ctx.store.byThread(thread.id);
+  if (current?.cardId === cardId && current.closed) {
+    // Mesmo card de um vínculo encerrado (ex.: o bot tinha perdido o acesso): reconecta.
+    await reconnectLink(ctx, cardId);
+    return cardId;
+  }
+  if (current) throw new Error('Este tópico já está vinculado a um card.');
   const other = ctx.store.byCard(cardId);
   if (other) throw new Error(`O card #${cardId} já está vinculado ao tópico <#${other.threadId}>.`);
 

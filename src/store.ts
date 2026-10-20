@@ -168,6 +168,11 @@ export class Store {
       .run(phaseId, phaseName, closed ? 1 : 0, cardId);
   }
 
+  /** Volta a acompanhar um vínculo encerrado (ex.: o bot tinha perdido o acesso ao card). */
+  reopenLink(cardId: string) {
+    this.db.prepare('UPDATE card_links SET closed = 0 WHERE card_id = ?').run(cardId);
+  }
+
   unlinkThread(threadId: string) {
     this.db.prepare('DELETE FROM card_links WHERE thread_id = ?').run(threadId);
   }
