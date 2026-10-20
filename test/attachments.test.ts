@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { BoardService } from '../src/goalfy/board.js';
-import { attachmentPaths, CardService, replaceUrls, safeFileName } from '../src/goalfy/cards.js';
+import { attachmentPaths, CardService, replaceUrls, safeFileName, uploadedPath } from '../src/goalfy/cards.js';
 import type { GoalfyClient } from '../src/goalfy/client.js';
 
 const DISCORD = 'https://cdn.discordapp.com/attachments/1/2/print%20tela.png?ex=abc&is=def&hm=123';
@@ -36,7 +36,8 @@ function setup(opts: { withAttachmentField?: boolean; cardForm?: unknown } = {})
     uploadFile: async (...args: unknown[]) => {
       calls.push({ op: 'upload', args });
       n++;
-      return { url: `https://storage.googleapis.com/assinada?X-Goog-Expires=900&n=${n}`, path: `uuid-${n}/print_tela.png` };
+      // Formato real de /public/files/upload/{boardId}: embrulhado com o nome da classe
+      return { FileResponse: { url: `https://storage.googleapis.com/assinada?X-Goog-Expires=900&n=${n}`, path: `uuid-${n}/print_tela.png` } };
     },
     createCard: async (...args: unknown[]) => {
       calls.push({ op: 'create', args });
@@ -115,6 +116,15 @@ describe('utilitários', () => {
   it('nome de arquivo seguro para o caminho do armazenamento', () => {
     assert.equal(safeFileName('Print da tela (1) ção.PNG'), 'Print_da_tela_1_cao.PNG');
     assert.equal(safeFileName('???'), 'arquivo');
+  });
+
+  it('lê o caminho do upload nos dois formatos da Goalfy (bug de produção: resposta embrulhada)', () => {
+    assert.equal(uploadedPath({ url: 'u', path: 'a/1.png' }), 'a/1.png');
+    // /public/files/upload/{boardId} (resposta real, 20/10)
+    assert.equal(uploadedPath({ FileResponse: { url: 'u', path: 'd912d425/teste-bot.txt', fileId: null } }), 'd912d425/teste-bot.txt');
+    assert.equal(uploadedPath({ outro: { path: 'b/2.png' } }), 'b/2.png');
+    assert.equal(uploadedPath('File upload failed.'), undefined);
+    assert.equal(uploadedPath({ FileResponse: {} }), undefined);
   });
 
   it('lê os caminhos já gravados em qualquer formato', () => {

@@ -36,6 +36,20 @@ export interface AttachmentReport {
   copiedUrls?: Set<string>;
 }
 
+/**
+ * Caminho do arquivo na resposta do upload. /files/upload devolve `{ url, path }`, mas
+ * /public/files/upload/{boardId} devolve embrulhado com o nome da classe:
+ * `{ "FileResponse": { url, path, … } }`. Aceita os dois.
+ */
+export function uploadedPath(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.path === 'string' && obj.path) return obj.path;
+  const inner = obj.FileResponse ?? Object.values(obj).find((v) => v && typeof v === 'object' && typeof (v as Record<string, unknown>).path === 'string');
+  const path = inner && typeof inner === 'object' ? (inner as Record<string, unknown>).path : undefined;
+  return typeof path === 'string' && path ? path : undefined;
+}
+
 /** Caminhos já gravados num campo de anexo (lista, JSON ou texto separado por vírgula). */
 export function attachmentPaths(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
@@ -138,11 +152,10 @@ export class CardService {
         // Privado: o arquivo fica no armazenamento da Goalfy e é referenciado pelo caminho
         // (permanente) no campo de anexo; a Goalfy gera o link de visualização a cada acesso.
         // O conteúdo só passa pela memória do bot durante a cópia.
-        const raw = (await this.client.uploadFile(this.board.boardId, safeFileName(a.name), data, a.contentType ?? res.headers.get('content-type') ?? undefined)) as {
-          path?: string;
-        };
-        if (!raw?.path) throw new Error('a Goalfy não devolveu o caminho do arquivo');
-        paths.push(raw.path);
+        const raw = await this.client.uploadFile(this.board.boardId, safeFileName(a.name), data, a.contentType ?? res.headers.get('content-type') ?? undefined);
+        const path = uploadedPath(raw);
+        if (!path) throw new Error('a Goalfy não devolveu o caminho do arquivo');
+        paths.push(path);
         copiedUrls.add(a.url);
         copied.push(a.name);
       } catch (e) {
