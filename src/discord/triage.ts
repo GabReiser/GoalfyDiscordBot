@@ -14,7 +14,7 @@ import { type CreatePlan, matchOption, planCreate, RESPONSIBLE_FIELD_ID } from '
 import type { Card, FormField } from '../goalfy/types.js';
 import { logger } from '../logger.js';
 import { FIELD_ALIASES, type LogicalField, normalize, SEVERITY_TAGS, TOPIC_STATUS, typeFront } from '../process.js';
-import { missingSections, parseTopic, type ParsedTopic, TEMPLATE_HINT } from '../topicTemplate.js';
+import { IDENTIFICATION_BLOCK, missingBasics, missingSections, parseTopic, type ParsedTopic, TEMPLATE_HINT } from '../topicTemplate.js';
 import { primeComments, reconnectLink } from './sync.js';
 import { applyPhaseTag, closeThread, forumTagNames, isMonitoredForum, requireTriage, setTopicStatus } from './topics.js';
 import {
@@ -23,6 +23,7 @@ import {
   cardModal,
   classifyModal,
   draftMessage,
+  duplicateButtons,
   COLORS,
   errorEmbed,
   type FormValues,
@@ -71,31 +72,57 @@ const threadOf = (i: { channel: unknown }) => {
   return ch?.isThread?.() ? (ch as AnyThreadChannel) : undefined;
 };
 
-/** Busca cards com palavras parecidas com o título (verificar duplicidade — seção 5.2). */
+/** Palavras comuns demais em título de chamado para indicar que dois casos são o mesmo. */
+const STOPWORDS = new Set(
+  'para pela pelo como quando onde esta estao nao sendo sobre depois antes apos entre mesmo outra outro algum alguns alguma ainda erro erros problema problemas falha bug cliente clientes usuario usuaria usuarios aparece aparecendo acontece funciona funcionando consegue conseguindo'.split(' '),
+);
+
+/** Palavras que identificam o assunto (sem acento, ≥ 4 letras, sem as genéricas). */
+export function keywords(title: string): string[] {
+  return [...new Set(normalize(title).split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 4 && !STOPWORDS.has(w)))];
+}
+
+/**
+ * Ordena candidatos pela quantidade de palavras do assunto em comum com o título do tópico.
+ * Exige pelo menos 2 em comum (ou 1, se o título só tem uma palavra de assunto): uma palavra
+ * solta como "indexação" traria meio board.
+ */
+export function rankSimilar<T extends { title: string }>(title: string, cards: T[], max = 3): T[] {
+  const words = keywords(title);
+  const needed = Math.min(2, words.length);
+  if (!needed) return [];
+  return cards
+    .map((card) => {
+      const cardWords = new Set(keywords(card.title));
+      return { card, score: words.filter((w) => cardWords.has(w)).length };
+    })
+    .filter((h) => h.score >= needed)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, max)
+    .map((h) => h.card);
+}
+
+/** Busca cards com o mesmo assunto do título (verificar duplicidade — seção 5.2). */
 async function similarCards(ctx: BotContext, title: string): Promise<Card[]> {
-  const words = [...new Set(title.split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 5))]
-    .sort((a, b) => b.length - a.length)
-    .slice(0, 3);
-  const hits = new Map<string, { card: Card; score: number }>();
+  const words = keywords(title).sort((a, b) => b.length - a.length).slice(0, 4);
+  const found = new Map<string, Card>();
   for (const search of words) {
     try {
-      for (const card of (await ctx.board.searchCards({ search, limit: 5 })).cards) {
-        const prev = hits.get(card.id);
-        hits.set(card.id, { card, score: (prev?.score ?? 0) + 1 });
-      }
+      for (const card of (await ctx.board.searchCards({ search, limit: 10 })).cards) found.set(card.id, card);
     } catch (e) {
       logger.debug(`Busca de cards parecidos falhou para "${search}"`, e);
     }
   }
-  return [...hits.values()].sort((a, b) => b.score - a.score).slice(0, 5).map((h) => h.card);
+  return rankSimilar(title, [...found.values()]);
 }
 
 // ── Tópico novo ─────────────────────────────────────────────────────────────
 
 export async function postTriagePanel(ctx: BotContext, thread: AnyThreadChannel, attempts = 1) {
-  const { parsed, hasAttachments } = await topicContext(thread, attempts);
-  const missing = missingSections(parsed, hasAttachments);
+  const { content, parsed, hasAttachments } = await topicContext(thread, attempts);
+  const missing = missingBasics(content, parsed, hasAttachments);
   const similar = await similarCards(ctx, thread.name);
+  const phases = similar.length ? await ctx.board.phases().catch(() => []) : [];
 
   const embed = new EmbedBuilder()
     .setColor(COLORS.info)
@@ -109,18 +136,37 @@ export async function postTriagePanel(ctx: BotContext, thread: AnyThreadChannel,
 
   if (missing.length) {
     embed.addFields({
-      name: '📝 Consegue complementar?',
-      value: truncate(`${missing.map((m) => `• ${m}`).join('\n')}\n\n_Isso ajuda a reproduzir o problema mais rápido._`, 1024),
+      name: '📝 Faltou identificar o chamado',
+      value: truncate(
+        `Não encontrei: ${missing.map((m) => `**${m}**`).join(', ')}.\nResponda aqui mesmo, no formato:\n\n${IDENTIFICATION_BLOCK}\n\n_Dica: nos próximos tópicos, comece a descrição por esse bloco._`,
+        1024,
+      ),
     });
   }
+  const linkable: Card[] = [];
   if (similar.length) {
+    const lines = similar.map((c) => {
+      const phase = phases.find((p) => p.title === c.phaseName);
+      const final = phase && ctx.board.isDone(phase) ? (ctx.board.isCancel(phase) ? ' ❌ cancelado' : ' ✅ já em produção') : '';
+      const topic = ctx.store.byCard(c.id);
+      if (!topic) linkable.push(c);
+      return `• [${truncate(c.title, 70)}](${ctx.board.cardUrl(c.id)})${c.phaseName ? ` — _${c.phaseName}_` : ''}${final}${topic ? ` · <#${topic.threadId}>` : ''}`;
+    });
     embed.addFields({
-      name: '👯 Cards parecidos no board',
-      value: truncate(similar.map((c) => `• [#${c.id} · ${truncate(c.title, 60)}](${ctx.board.cardUrl(c.id)})${c.phaseName ? ` — _${c.phaseName}_` : ''}`).join('\n'), 1024),
+      name: '👯 Pode ser o mesmo caso de',
+      value: truncate(`${lines.join('\n')}\n\n_Se for o mesmo, a triagem vincula com um clique e você acompanha por aqui._`, 1024),
     });
   }
 
-  await thread.send({ embeds: [embed], components: triagePanel() });
+  const components = [...triagePanel(), ...(linkable.length ? [duplicateButtons(linkable)] : [])];
+  const ownerId = thread.ownerId;
+  await thread.send({
+    // Marca quem abriu só quando falta informação (é um pedido para essa pessoa).
+    content: missing.length && ownerId ? `<@${ownerId}>` : undefined,
+    allowedMentions: { users: missing.length && ownerId ? [ownerId] : [], parse: [] },
+    embeds: [embed],
+    components,
+  });
 }
 
 export async function onThreadCreate(ctx: BotContext, thread: AnyThreadChannel, newlyCreated: boolean) {
@@ -552,6 +598,22 @@ export async function linkExistingCard(ctx: BotContext, thread: AnyThreadChannel
   await ctx.cards.comment(card.id, `Tópico do Discord vinculado: ${thread.url}`).catch(() => {});
   await announceLinkedCard(ctx, thread, card, userId, '🔗 Ocorrência vinculada a um card que já existia.');
   return card.id;
+}
+
+/** "Vincular: <card parecido>" no painel: vincula o tópico direto, sem digitar o card. */
+export async function onDuplicateButton(ctx: BotContext, interaction: ButtonInteraction, cardId: string) {
+  if (!(await requireTriage(ctx, interaction))) return;
+  const thread = threadOf(interaction);
+  if (!thread) return;
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  try {
+    await linkExistingCard(ctx, thread, cardId, interaction.user.id);
+    // Tira os botões de cards parecidos do painel (o tópico já tem card).
+    await interaction.message.edit({ components: triagePanel() }).catch(() => {});
+    await interaction.editReply({ embeds: [okEmbed('Tópico vinculado ao card parecido.')] });
+  } catch (e) {
+    await interaction.editReply({ embeds: [errorEmbed(e)] });
+  }
 }
 
 export async function onLinkButton(ctx: BotContext, interaction: ButtonInteraction) {

@@ -72,6 +72,38 @@ export function missingSections(parsed: ParsedTopic, hasAttachments: boolean): s
   return RECOMMENDED.filter((k) => !parsed[k] && !(k === 'evidence' && hasAttachments)).map((k) => TOPIC_SECTIONS[k].label);
 }
 
+/**
+ * Bloco de identificação que vai no início de todo tópico de N2 (combinado com a equipe):
+ *   **Org:** poenatela
+ *   **Usuário:** Filipe
+ *   **Link do board + relatório:** https://app.goalfy.com.br/board/…
+ * Mais a evidência (print/vídeo). Procurado no texto livre; retorna só o que parece faltar.
+ */
+export const BASICS = {
+  org: 'Org',
+  user: 'Usuário',
+  link: 'Link do board + relatório',
+  evidence: 'Print ou vídeo do problema',
+} as const;
+
+export const IDENTIFICATION_BLOCK = ['**Org:** nome da organização', '**Usuário:** quem relatou', '**Link do board + relatório:** https://app.goalfy.com.br/board/…'].join('\n');
+
+export function missingBasics(content: string, parsed: ParsedTopic, hasAttachments: boolean): string[] {
+  // Sem acento e em minúsculas, mas mantendo pontuação e quebras de linha ("Org:", links).
+  const text = content.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+  const label = (names: string) => new RegExp(`(^|\\n)[\\s>*_#-]*(${names})[\\s*_]*[:\\-–]\\s*[*_]*\\s*\\S`);
+  const has = {
+    org: !!parsed.client || label('org|organizacao|empresa|cliente|tenant').test(text),
+    user: label('usuario|usuaria|user|solicitante|contato').test(text),
+    link: /https?:\/\/(app\.)?goalfy\.com\.br\/\S+/.test(text),
+    evidence:
+      hasAttachments ||
+      !!parsed.evidence ||
+      /https?:\/\/\S*(\.(png|jpe?g|gif|webp|mp4|mov|webm)\b|loom\.com|drive\.google|prnt\.sc|gyazo|imgur|youtu)/.test(text),
+  };
+  return (Object.keys(BASICS) as (keyof typeof BASICS)[]).filter((k) => !has[k]).map((k) => BASICS[k]);
+}
+
 export const TEMPLATE_HINT = [
   '**Título** — descrição objetiva do problema',
   '**Origem:** Suporte | Consultoria | Produto | Interno | Outra',

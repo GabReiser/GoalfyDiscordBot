@@ -27,11 +27,13 @@ entender o código. Se você já conhece discord.js, pule para a [seção 3](#3-
 
 ```
 Tópico aberto no fórum N2/N3
-   │  bot marca 🔎 Em Triagem, aponta o que falta no relato e sugere cards parecidos
+   │  bot marca 🔎 Em Triagem
+   │  faltou Org / Usuário / Link do board + relatório / print? marca quem abriu e mostra o bloco
+   │  sugere cards com o mesmo assunto (≥ 2 palavras em comum), avisando se já está em produção
    ▼
 Painel da triagem (só quem tem o cargo de N2/N3)
    ├─ 📋 Criar card ──► selects do Formulário Inicial ──► modal com os textos ──► card na Goalfy
-   ├─ 🔗 Vincular card existente (duplicidade)
+   ├─ 🔗 Vincular card existente (duplicidade) — ou 🔗 Vincular: <card parecido>, com um clique
    ├─ ⏳ Pedir informação  ──► marca o solicitante; quando ele responde, volta para 🔎
    ├─ ✅ Resolvido sem card ──► registra como foi resolvido e arquiva o tópico
    └─ ❌ Não procede        ──► registra o motivo e arquiva o tópico

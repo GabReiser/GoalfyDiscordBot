@@ -37,6 +37,7 @@ export const IDS = {
   triageWaiting: 'triage:waiting',
   triageResolve: 'triage:resolve',
   triageReject: 'triage:reject',
+  triageDuplicate: (cardId: string) => `triage:dup:${cardId}`,
   // Classificação (passo 1 da criação)
   classify: (fieldInfoId: string) => `classify:${fieldInfoId}`,
   classifyOpen: 'classify:open',
@@ -174,6 +175,19 @@ export function triagePanel() {
       new ButtonBuilder().setCustomId(IDS.triageReject).setStyle(ButtonStyle.Danger).setLabel('Não procede').setEmoji('❌'),
     ),
   ];
+}
+
+/** Um botão "Vincular" por card parecido (só triagem pode usar). */
+export function duplicateButtons(cards: { id: string; title: string }[]) {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    cards.slice(0, 5).map((c) =>
+      new ButtonBuilder()
+        .setCustomId(IDS.triageDuplicate(c.id))
+        .setStyle(ButtonStyle.Secondary)
+        .setEmoji('🔗')
+        .setLabel(truncate(`Vincular: ${c.title}`, 80)),
+    ),
+  );
 }
 
 // ── Formulários dinâmicos (campos vindos da Goalfy) ─────────────────────────

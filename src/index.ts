@@ -13,6 +13,7 @@ import {
   onPhaseModal,
   onLegacyClassifySelect,
   onCreateModal,
+  onDuplicateButton,
   onLinkButton,
   onLinkModal,
   onRejectButton,
@@ -73,6 +74,7 @@ async function route(interaction: Interaction) {
     if (scope === 'triage') {
       if (action === 'card') return startCardFlow(ctx, interaction);
       if (action === 'link') return onLinkButton(ctx, interaction);
+      if (action === 'dup') return onDuplicateButton(ctx, interaction, arg[0]!);
       if (action === 'waiting') return onWaitingButton(ctx, interaction);
       if (action === 'resolve') return onResolveButton(ctx, interaction);
       if (action === 'reject') return onRejectButton(ctx, interaction);
