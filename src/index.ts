@@ -34,6 +34,7 @@ import { GoalfyClient } from './goalfy/client.js';
 import { logger } from './logger.js';
 import { postLifecycle, startAlerts } from './discord/alerts.js';
 import { prepareGuild } from './discord/setup.js';
+import { postUpdates } from './discord/updates.js';
 import { Store } from './store.js';
 import { startWebhookServer } from './webhook.js';
 
@@ -185,6 +186,7 @@ client.once(Events.ClientReady, async (c) => {
   });
 
   const phases = await board.phases().catch(() => []);
+  await postUpdates(ctx).catch((e) => logger.warn('Falha ao anunciar novidades', e));
   await postLifecycle(ctx, 'start', [
     `Board: **${phases.length} fases** · acompanhando **${ctx.store.openLinks().length} card(s)**`,
     `Webhook: ${webhookServer ? 'ligado (mudança de fase na hora)' : 'desligado (só polling)'} · sincronização a cada ${config.SYNC_INTERVAL_SECONDS}s`,
