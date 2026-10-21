@@ -1,6 +1,7 @@
 /**
  * Alertas operacionais num canal do Discord (DISCORD_LOG_CHANNEL_ID), para devs e tech lead:
- *  - WARN/ERROR do bot, agrupados por minuto (mensagens repetidas viram "×N"), para não virar spam;
+ *  - ERROR do bot, agrupados por minuto (mensagens repetidas viram "×N"), para não virar spam.
+ *    WARN (lentidão, 403 passageiro, retry…) fica só no log (Dozzle): no canal era ruído;
  *  - quando o bot liga e quando desliga.
  *
  * A visibilidade (ex.: só o cargo Triagem N2) é definida nas permissões do canal no Discord;
@@ -84,7 +85,7 @@ export function postLifecycle(ctx: BotContext, kind: 'start' | 'stop', details: 
   return Promise.race([sendQuietly(ctx, { embeds: [lifecycleEmbed(kind, details)] }), new Promise((r) => setTimeout(r, 3000))]);
 }
 
-/** Começa a coletar WARN/ERROR e postar um resumo por minuto. Retorna função para parar. */
+/** Começa a coletar ERROR e postar um resumo por minuto. Retorna função para parar. */
 export function startAlerts(ctx: BotContext): () => void {
   if (!ctx.config.DISCORD_LOG_CHANNEL_ID) return () => {};
 
@@ -92,6 +93,7 @@ export function startAlerts(ctx: BotContext): () => void {
   let windowStart = new Date();
 
   const unsubscribe = logger.onWarnOrError((e) => {
+    if (e.level !== 'error') return; // avisos ficam só no log
     const key = alertKey(e);
     const g = groups.get(key);
     const sample = e.detail ? `${e.msg}: ${e.detail}` : e.msg;

@@ -30,12 +30,12 @@ describe('alertas no Discord', () => {
     assert.notEqual(a, alertKey({ level: 'error', msg: 'Sem acesso ao card x (403, tentativa 1/3)' }));
   });
 
-  it('agrupa a janela numa mensagem só, com ×N e erros primeiro', async () => {
+  it('só erros vão para o canal, agrupados com ×N (avisos ficam no log)', async () => {
     const { ctx, sent } = ctxWith(async () => undefined);
     const stop = startAlerts(ctx);
-    logger.warn('Goalfy GET /cards/1 → 500');
-    logger.warn('Goalfy GET /cards/2 → 500');
-    logger.warn('Goalfy GET /cards/3 → 500');
+    logger.warn('Interação /triagem: resposta 1778ms: LENTA');
+    logger.error('Goalfy GET /cards/1 → 500');
+    logger.error('Goalfy GET /cards/2 → 500');
     logger.error('Falha ao criar card', new Error('timeout'));
     logger.info('isso não é alerta');
     stop(); // força o envio da janela
@@ -43,10 +43,20 @@ describe('alertas no Discord', () => {
 
     assert.equal(sent.length, 1);
     const embed = sent[0]!.embeds[0]!.toJSON();
-    assert.match(embed.title!, /1 erro\(s\) e 3 aviso\(s\)/);
-    const [first, second] = embed.description!.split('\n');
-    assert.match(first!, /❌ Falha ao criar card: timeout/);
-    assert.match(second!, /⚠️ \*\*×3\*\* Goalfy GET/);
+    assert.equal(embed.title, '❌ 3 erro(s)');
+    const [first, second, third] = embed.description!.split('\n');
+    assert.match(first!, /❌ \*\*×2\*\* Goalfy GET/);
+    assert.match(second!, /❌ Falha ao criar card: timeout/);
+    assert.equal(third, undefined, 'o aviso de lentidão não aparece');
+  });
+
+  it('janela só com avisos não posta nada', async () => {
+    const { ctx, sent } = ctxWith(async () => undefined);
+    const stop = startAlerts(ctx);
+    logger.warn('Interação /card: resposta 2100ms: LENTA');
+    stop();
+    await tick();
+    assert.equal(sent.length, 0);
   });
 
   it('falha ao postar não gera alerta sobre o alerta (sem loop)', async () => {
@@ -57,7 +67,7 @@ describe('alertas no Discord', () => {
     console.error = () => {};
     try {
       const stop = startAlerts(ctx);
-      logger.warn('primeiro aviso');
+      logger.error('primeiro erro');
       stop();
       await tick();
       const stop2 = startAlerts(ctx);

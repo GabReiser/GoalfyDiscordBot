@@ -520,7 +520,7 @@ Não suba o perfil `webhook` (Caddy): ele disputaria as portas 80/443 com o ingr
   [src/changelog.ts](src/changelog.ts) (id novo + modo de uso escrito para o suporte). No próximo deploy o bot posta no canal
   as entradas ainda não anunciadas, uma vez só (o controle fica no banco, chave `updates:posted`).
 - **Alertas no Discord** (`DISCORD_LOG_CHANNEL_ID`): o bot posta no canal, a cada minuto, um resumo
-  dos avisos e erros (mensagens repetidas viram "×N"), além de "🟢 Bot iniciado" e "🔴 Bot desligando".
+  dos **erros** (mensagens repetidas viram "×N"; avisos como lentidão ficam só no painel de logs), além de "🟢 Bot iniciado" e "🔴 Bot desligando".
   Deixe o canal visível só para a equipe (ex.: cargo de triagem); o `/goalfy status` avisa se ele
   estiver aberto para `@everyone`.
 - **Tempo das interações**: cada clique/comando é medido (chegada do Discord até o bot e resposta do
