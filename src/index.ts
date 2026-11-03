@@ -3,6 +3,7 @@ import { loadBotConfig } from './config.js';
 import type { BotContext } from './context.js';
 import { onAttachToCard, onAutocomplete, onCardButton, onCardSelect, onChatInput, onSendToCard } from './discord/commands.js';
 import { onTopicsButton } from './discord/myTopics.js';
+import { onChangelogButton, startChangelogSchedule } from './discord/weeklyChangelog.js';
 import { startSync } from './discord/sync.js';
 import {
   onClassifyCancel,
@@ -87,6 +88,7 @@ async function route(interaction: Interaction) {
       if (action === 'cancel') return onClassifyCancel(interaction);
     }
     if (scope === 'topics') return onTopicsButton(ctx, interaction, action, arg[0]!);
+    if (scope === 'changelog') return onChangelogButton(ctx, interaction, action);
     if (scope === 'card' && action === 'fill') return onFillAndMove(interaction, arg[0]!);
     if (scope === 'card') return onCardButton(ctx, interaction, action, arg);
   }
@@ -151,6 +153,7 @@ client.on(Events.ThreadDelete, (thread) => {
 
 let stopSync: (() => void) | undefined;
 let stopAlerts: (() => void) | undefined;
+let stopChangelog: (() => void) | undefined;
 let webhookServer: import('node:http').Server | undefined;
 
 client.once(Events.ClientReady, async (c) => {
@@ -180,6 +183,7 @@ client.once(Events.ClientReady, async (c) => {
   }
   ctx.store.set('goalfy.env', envId);
   stopSync = startSync(ctx);
+  stopChangelog = startChangelogSchedule(ctx);
   webhookServer = await startWebhookServer(ctx).catch((e) => {
     logger.error('Falha ao iniciar o servidor de webhook', e);
     return undefined;
@@ -197,6 +201,7 @@ client.once(Events.ClientReady, async (c) => {
 async function shutdown(signal: string) {
   logger.info(`${signal} recebido, encerrando…`);
   stopSync?.();
+  stopChangelog?.();
   stopAlerts?.();
   webhookServer?.close();
   await postLifecycle(ctx, 'stop', [`Motivo: ${signal === 'SIGTERM' ? 'reinício/deploy' : signal}`]);

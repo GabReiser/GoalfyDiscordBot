@@ -17,6 +17,7 @@ import {
   time,
   TimestampStyles,
 } from 'discord.js';
+import { mapLimit } from '../concurrency.js';
 import type { BotContext } from '../context.js';
 import { logger } from '../logger.js';
 import { normalize, TOPIC_STATUS, type TopicStatus } from '../process.js';
@@ -104,20 +105,6 @@ async function wasAnswered(thread: AnyThreadChannel): Promise<boolean | undefine
   } catch {
     return undefined;
   }
-}
-
-async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, async () => {
-      while (next < items.length) {
-        const i = next++;
-        out[i] = await fn(items[i]!);
-      }
-    }),
-  );
-  return out;
 }
 
 // Trocar de filtro nos botões não refaz as buscas no Discord por 1 minuto.

@@ -177,6 +177,8 @@ export interface Card {
 
 export interface PhaseForm {
   phaseId: string;
+  /** Primeira entrada do card na fase (`createdAt` do histórico: um registro por fase, reaproveitado se o card voltar). */
+  enteredAt?: string;
   formId?: string;
   fields: { id?: string; infoId: string; value: unknown }[];
 }
@@ -192,7 +194,7 @@ function toPhaseForms(raw: unknown): PhaseForm[] {
       const infoId = pick(f, 'infoId', 'fieldInfoId');
       return infoId ? [{ id: pick(f, 'id'), infoId, value: f.value }] : [];
     });
-    return [{ phaseId, formId: pick(form, 'id'), fields }];
+    return [{ phaseId, enteredAt: pick(h, 'createdAt'), formId: pick(form, 'id'), fields }];
   });
 }
 

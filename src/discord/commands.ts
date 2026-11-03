@@ -21,6 +21,7 @@ import { logger } from '../logger.js';
 import { normalize, TOPIC_STATUS } from '../process.js';
 import { requestMove } from './move.js';
 import { isTopicFilter, TOPIC_FILTERS, topicsOf, topicsView } from './myTopics.js';
+import { handleChangelog } from './weeklyChangelog.js';
 import { reconnectLink, reconnectMessage } from './sync.js';
 import { linkExistingCard, parseCardRef, postTriagePanel, startCardFlow } from './triage.js';
 import { planCreate } from '../goalfy/formPlan.js';
@@ -113,6 +114,13 @@ const topicsCommand = new SlashCommandBuilder()
   )
   .addUserOption((o) => o.setName('usuario').setDescription('Ver os tópicos de outra pessoa (padrão: você)'));
 
+const changelogCommand = new SlashCommandBuilder()
+  .setName('changelog')
+  .setDescription('Prévia do changelog (cards em produção por tipo e módulo) para publicar no canal')
+  .setContexts(InteractionContextType.Guild)
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .addIntegerOption((o) => o.setName('dias').setDescription('Período em dias até agora (padrão: 7)').setMinValue(1).setMaxValue(90));
+
 const sendToCardMenu = new ContextMenuCommandBuilder()
   .setName('Enviar ao card Goalfy')
   .setType(ApplicationCommandType.Message)
@@ -123,7 +131,7 @@ const attachToCardMenu = new ContextMenuCommandBuilder()
   .setType(ApplicationCommandType.Message)
   .setContexts(InteractionContextType.Guild);
 
-export const commandData = [cardCommand, triageCommand, topicsCommand, goalfyCommand, sendToCardMenu, attachToCardMenu].map((c) => c.toJSON());
+export const commandData = [cardCommand, triageCommand, topicsCommand, goalfyCommand, changelogCommand, sendToCardMenu, attachToCardMenu].map((c) => c.toJSON());
 
 type MessageAttachments = MessageContextMenuCommandInteraction['targetMessage']['attachments'];
 
@@ -431,6 +439,7 @@ export async function onChatInput(ctx: BotContext, interaction: ChatInputCommand
     else if (interaction.commandName === 'triagem') await handleTriage(ctx, interaction);
     else if (interaction.commandName === 'topicos') await handleTopics(ctx, interaction);
     else if (interaction.commandName === 'goalfy') await handleGoalfy(ctx, interaction);
+    else if (interaction.commandName === 'changelog') await handleChangelog(ctx, interaction);
   } catch (e) {
     logger.warn(`/${interaction.commandName} falhou`, e);
     const payload = { embeds: [errorEmbed(e)], components: [] };

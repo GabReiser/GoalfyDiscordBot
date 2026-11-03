@@ -60,6 +60,7 @@ Card chega na fase final ──► ✅ Resolvido (entrega) ou ❌ Não procede (
 | `/topicos [filtro] [usuario]` | Seus tópicos no fórum (ou os de outra pessoa), uma linha por tópico: status, fase do card na Goalfy (link), etiquetas extras, "sem resposta" e idade. Filtros em botões: Em aberto (padrão), Sem resposta, Com card, Encerrados, Todos. Só quem executa vê | Todos |
 | `/triagem relatorio [dias]` | Indicadores: abertos, cards gerados, resolvidos na triagem, tempo até destino, contagem por frente, tipo, origem e severidade | Todos |
 | `/triagem painel` | Reenvia o painel no tópico (útil para tópicos antigos) | Triagem |
+| `/changelog [dias]` | Prévia (só você vê) dos cards que entraram em produção no período, por Tipo e Módulo, com o botão **Publicar** no canal de changelog (marca @everyone). O mesmo changelog sai sozinho toda **segunda às 08:00** (7 dias) | Admin do servidor |
 | `/goalfy status` | Diagnóstico: fases, formulário e campos mapeados | Admin do servidor |
 | Menu da mensagem → **Enviar ao card Goalfy** | Manda uma mensagem do tópico como comentário no card | Todos |
 
@@ -516,6 +517,12 @@ Não suba o perfil `webhook` (Caddy): ele disputaria as portas 80/443 com o ingr
 
 ### Acompanhando o bot (logs e alertas)
 
+- **Changelog semanal** (`DISCORD_CHANGELOG_CHANNEL_ID`): toda segunda às 08:00 (Brasília) o bot posta os cards que entraram
+  na fase de produção nos 7 dias anteriores, agrupados por **Tipo** e **Módulo/Funcionalidade** do Formulário Inicial
+  (título + link do card), marcando @everyone. Semana sem entregas não posta. A data de entrada vem do histórico do card
+  na fase e fica guardada no banco (`production_entries`): só cards novos na fase são abertos a cada execução.
+  Se o bot estiver fora às 08:00, posta assim que voltar no mesmo dia. O bot precisa de ver canal, enviar mensagens,
+  inserir links e **mencionar @everyone** nesse canal (o `/goalfy status` confere).
 - **Novidades no Discord** (`DISCORD_UPDATES_CHANNEL_ID`): ao lançar algo que muda o uso, adicione uma entrada **no topo** de
   [src/changelog.ts](src/changelog.ts) (id novo + modo de uso escrito para o suporte). No próximo deploy o bot posta no canal
   as entradas ainda não anunciadas, uma vez só (o controle fica no banco, chave `updates:posted`).

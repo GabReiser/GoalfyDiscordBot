@@ -15,6 +15,15 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-11-03-changelog-semanal',
+    title: '📦 Changelog semanal do produto',
+    body: [
+      'Toda **segunda às 08:00** o bot publica no canal <#1567173399770431488> tudo o que **entrou em produção** nos últimos 7 dias.',
+      'As entregas vêm agrupadas por **tipo** (Feature, Melhoria, Bug…) e por **módulo** (Board/Kanban, Report, Automation…), com o título e o link de cada card na Goalfy, para você abrir e ver os detalhes.',
+      'Semana sem entregas não gera aviso.',
+    ],
+  },
+  {
     id: '2026-10-21-painel-identificacao-parecidos',
     title: '📝 Abertura de tópico: identificação do chamado e cards parecidos',
     body: [

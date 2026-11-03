@@ -114,6 +114,14 @@ export class Store {
         reminded_at    TEXT
       );
 
+      -- Quando cada card entrou na fase de produção (changelog semanal). Guardado para não
+      -- abrir de novo, toda semana, cards que já estão em produção há tempos.
+      CREATE TABLE IF NOT EXISTS production_entries (
+        card_id    TEXT PRIMARY KEY,
+        phase_id   TEXT NOT NULL,
+        entered_at TEXT
+      );
+
       -- Configurações internas do bot (ex.: webhook registrado na Goalfy)
       CREATE TABLE IF NOT EXISTS kv (
         key   TEXT PRIMARY KEY,
@@ -135,6 +143,23 @@ export class Store {
 
   set(key: string, value: string) {
     this.db.prepare('INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
+  }
+
+  // ── Changelog (entrada em produção) ───────────────────────────────────────
+
+  /** card → quando entrou na fase de produção (null = histórico sem data). */
+  productionEntries(): Map<string, { phaseId: string; enteredAt: string | null }> {
+    const rows = this.db.prepare('SELECT * FROM production_entries').all() as Row[];
+    return new Map(rows.map((r) => [String(r.card_id), { phaseId: String(r.phase_id), enteredAt: s(r.entered_at) }]));
+  }
+
+  saveProductionEntry(cardId: string, phaseId: string, enteredAt: string | null) {
+    this.db
+      .prepare(
+        `INSERT INTO production_entries (card_id, phase_id, entered_at) VALUES (?, ?, ?)
+         ON CONFLICT(card_id) DO UPDATE SET phase_id = excluded.phase_id, entered_at = excluded.entered_at`,
+      )
+      .run(cardId, phaseId, enteredAt);
   }
 
   // ── Vínculos ──────────────────────────────────────────────────────────────

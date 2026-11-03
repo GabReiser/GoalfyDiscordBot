@@ -22,6 +22,7 @@ const ENV_FIELD: Record<LogicalField, keyof GoalfyConfig> = {
   expectedResult: 'GOALFY_FIELD_EXPECTED_RESULT',
   front: 'GOALFY_FIELD_FRONT',
   type: 'GOALFY_FIELD_TYPE',
+  module: 'GOALFY_FIELD_MODULE',
   origin: 'GOALFY_FIELD_ORIGIN',
   client: 'GOALFY_FIELD_CLIENT',
   severity: 'GOALFY_FIELD_SEVERITY',

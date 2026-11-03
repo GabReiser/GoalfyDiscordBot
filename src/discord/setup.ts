@@ -95,6 +95,23 @@ export async function checkDiscordSetup(ctx: BotContext): Promise<string[]> {
       problems.push(`O canal de logs #${'name' in channel ? channel.name : cfg.DISCORD_LOG_CHANNEL_ID} está visível para @everyone. Restrinja ao cargo de triagem.`);
     }
   }
+
+  if (cfg.DISCORD_CHANGELOG_CHANNEL_ID) {
+    const channel = await guild.channels.fetch(cfg.DISCORD_CHANGELOG_CHANNEL_ID).catch(() => null);
+    const perms = channel && 'permissionsFor' in channel ? channel.permissionsFor(me) : null;
+    const needed = {
+      'ver canal': PermissionFlagsBits.ViewChannel,
+      'enviar mensagens': PermissionFlagsBits.SendMessages,
+      'inserir links': PermissionFlagsBits.EmbedLinks,
+      'mencionar @everyone': PermissionFlagsBits.MentionEveryone,
+    };
+    const missing = Object.entries(needed)
+      .filter(([, flag]) => !perms?.has(flag))
+      .map(([name]) => name);
+    if (!channel?.isSendable() || missing.length) {
+      problems.push(`Canal de changelog ${cfg.DISCORD_CHANGELOG_CHANNEL_ID}: o bot não tem ${missing.join(', ') || 'acesso'}.`);
+    }
+  }
   return problems;
 }
 

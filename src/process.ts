@@ -93,6 +93,7 @@ export const FIELD_ALIASES = {
   expectedResult: ['resultado esperado', 'criterio de aceite', 'criterios de aceite', 'definicao de pronto'],
   front: ['frente'],
   type: ['tipo', 'type', 'natureza'],
+  module: ['modulo', 'module', 'funcionalidade'],
   origin: ['origem'],
   client: ['cliente', 'organizacao', 'empresa'],
   severity: ['severidade', 'criticidade', 'severity'],
