@@ -150,8 +150,27 @@ export class GoalfyClient {
   listCardsByBoard(boardId: string) {
     return this.request('GET', `/cards/board/${enc(boardId)}`);
   }
-  listCardsByPhase(phaseId: string) {
-    return this.request('GET', `/cards/phase/${enc(phaseId)}`);
+  /**
+   * Todos os cards de uma fase. Usa o endpoint paginado (`/filter`, ordenado no banco): o
+   * `GET /cards/phase/{id}` ordena em memória com um comparador que nunca devolve 0 e quebra
+   * com 500 ("Comparison method violates its general contract") em fases com muitos cards.
+   * `offset` é o número da página (Page.of(offset, limit) no backend).
+   */
+  async listCardsByPhase(phaseId: string): Promise<unknown[]> {
+    const limit = 500;
+    const byId = new Map<string, unknown>();
+    for (let page = 0; page < 100; page++) {
+      const raw = (await this.request('GET', `/cards/phase/${enc(phaseId)}/filter?offset=${page}&limit=${limit}`)) as unknown;
+      const obj = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+      const cards = Array.isArray(raw) ? raw : Array.isArray(obj.cards) ? obj.cards : [];
+      for (const c of cards) {
+        const id = c && typeof c === 'object' ? String((c as Record<string, unknown>).id ?? '') : '';
+        if (id) byId.set(id, c);
+      }
+      const total = typeof obj.cardsCount === 'number' ? obj.cardsCount : undefined;
+      if (cards.length < limit || (total !== undefined && byId.size >= total)) break;
+    }
+    return [...byId.values()];
   }
   filterCards(boardId: string, filter: CardFilter = {}) {
     const qs = new URLSearchParams();
