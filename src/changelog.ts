@@ -11,9 +11,26 @@ export interface ChangelogEntry {
   title: string;
   /** Linhas do modo de uso (markdown do Discord). */
   body: string[];
+  /**
+   * Para quem é: `team` (padrão) vai para o canal de novidades (chat-geral);
+   * `devs` é ajuste interno e vai só para o canal dos devs.
+   */
+  audience?: 'team' | 'devs';
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    id: '2026-11-09-changelog-manutencao-por-modulo',
+    audience: 'devs',
+    title: '📦 Changelog semanal: manutenção por módulo',
+    body: [
+      'O cabeçalho do changelog semanal (<#1567173399770431488>) ganhou uma linha com a **manutenção por módulo**: quantas **melhorias + bugs** entraram em produção em cada módulo, do que mais demandou para o que menos.',
+      '> **Manutenção por módulo** (melhorias + bugs): 📋 Board/Kanban (9) · 💬 Chat (5) · 📊 Report (4) · …',
+      'Serve para ver rápido qual módulo está pedindo mais manutenção. Features, débito técnico, infra e discovery não entram nessa conta.',
+      '',
+      'Também corrigido: o changelog de hoje falhou na primeira tentativa por um erro 500 da Goalfy ao listar a fase Em Produção (sort do `GET /cards/phase/{id}` no backend). O bot passou a usar a listagem paginada e postou normalmente.',
+    ],
+  },
   {
     id: '2026-11-03-changelog-semanal',
     title: '📦 Changelog semanal do produto',

@@ -526,6 +526,8 @@ Não suba o perfil `webhook` (Caddy): ele disputaria as portas 80/443 com o ingr
 - **Novidades no Discord** (`DISCORD_UPDATES_CHANNEL_ID`): ao lançar algo que muda o uso, adicione uma entrada **no topo** de
   [src/changelog.ts](src/changelog.ts) (id novo + modo de uso escrito para o suporte). No próximo deploy o bot posta no canal
   as entradas ainda não anunciadas, uma vez só (o controle fica no banco, chave `updates:posted`).
+  Ajuste interno, que não interessa ao suporte? Marque a entrada com `audience: 'devs'`: ela vai só para
+  `DISCORD_DEV_UPDATES_CHANNEL_ID` (vazio = canal de alertas).
 - **Alertas no Discord** (`DISCORD_LOG_CHANNEL_ID`): o bot posta no canal, a cada minuto, um resumo
   dos **erros** (mensagens repetidas viram "×N"; avisos como lentidão ficam só no painel de logs), além de "🟢 Bot iniciado" e "🔴 Bot desligando".
   Deixe o canal visível só para a equipe (ex.: cargo de triagem); o `/goalfy status` avisa se ele
