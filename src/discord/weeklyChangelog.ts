@@ -79,6 +79,43 @@ const TYPE_STYLE: { pattern: RegExp; emoji: string; color: number }[] = [
 ];
 const typeStyle = (type: string) => TYPE_STYLE.find((s) => s.pattern.test(normalize(type))) ?? { emoji: '📌', color: 0x2ecc71 };
 
+/** Emoji de cada módulo do formulário. Ordem importa: "dashboard" antes de "board", "partner portal" antes de "portal". */
+const MODULE_EMOJI: [RegExp, string][] = [
+  [/dashboard/, '📈'],
+  [/board|kanban/, '📋'],
+  [/database|banco de dados/, '🗄️'],
+  [/chat/, '💬'],
+  [/task|tarefa/, '✅'],
+  [/copilot|ai studio|\bia\b/, '🤖'],
+  [/automa|flow|fluxo/, '⚡'],
+  [/connect/, '🔌'],
+  [/report|relatorio/, '📊'],
+  [/campa/, '📣'],
+  [/partner|parceiro/, '🤝'],
+  [/portal/, '🌐'],
+  [/organiza|config/, '⚙️'],
+  [/admin/, '🛡️'],
+  [/notifica/, '🔔'],
+  [/mobile|celular/, '📱'],
+  [/home|inicio/, '🏠'],
+];
+export const moduleEmoji = (module: string) => MODULE_EMOJI.find(([p]) => p.test(normalize(module)))?.[1] ?? '🧩';
+
+/** Tipos que contam como manutenção no resumo por módulo. */
+const isMaintenance = (type: string) => /melhoria|improvement|bug|correcao|fix/.test(normalize(type));
+
+/** Melhorias + bugs por módulo, do que mais demandou para o que menos ("Sem módulo" por último). */
+export function maintenanceByModule(groups: ChangelogGroup[]): { module: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const g of groups) {
+    if (!isMaintenance(g.type)) continue;
+    for (const m of g.modules) counts.set(m.module, (counts.get(m.module) ?? 0) + m.items.length);
+  }
+  return [...counts.entries()]
+    .map(([module, count]) => ({ module, count }))
+    .sort((a, b) => Number(a.module === NO_MODULE) - Number(b.module === NO_MODULE) || b.count - a.count || a.module.localeCompare(b.module, 'pt-BR'));
+}
+
 /** Ordena pela ordem das opções na Goalfy; o que não está lá vem depois (alfabético) e "sem" por último. */
 function orderBy(options: string[], none: string) {
   const pos = new Map(options.map((o, i) => [normalize(o), i]));
@@ -131,12 +168,16 @@ const MESSAGE_EMBEDS_MAX = 10;
  */
 export function renderChangelog(groups: ChangelogGroup[], from: Date, to: Date, mentionEveryone: boolean): ChangelogMessage[] {
   const total = groups.reduce((n, g) => n + g.count, 0);
+  const maintenance = maintenanceByModule(groups);
   const header = [
     mentionEveryone ? '@everyone' : '',
     `## 📦 Changelog · ${periodLabel(from, to)}`,
     total
       ? `**${total} entrega(s)** em produção: ${groups.map((g) => `${typeStyle(g.type).emoji} ${g.type} (${g.count})`).join(' · ')}`
       : 'Nenhuma entrega chegou em produção nesse período.',
+    maintenance.length
+      ? `**Manutenção por módulo** (melhorias + bugs): ${maintenance.map((m) => `${moduleEmoji(m.module)} ${m.module} (${m.count})`).join(' · ')}`
+      : '',
   ]
     .filter(Boolean)
     .join('\n');

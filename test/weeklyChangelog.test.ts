@@ -11,6 +11,8 @@ import {
   dueWindow,
   fieldTexts,
   groupChangelog,
+  maintenanceByModule,
+  moduleEmoji,
   periodLabel,
   renderChangelog,
 } from '../src/discord/weeklyChangelog.js';
@@ -64,7 +66,7 @@ describe('mensagem', () => {
     const msgs = renderChangelog(groupChangelog([item('Filtro salvo', 'Feature', 'Report'), item('Erro X', 'Bug', 'Home')], TYPES, MODULES), from, to, true);
     assert.equal(msgs.length, 1);
     const m = msgs[0]!;
-    assert.match(m.content!, /^@everyone\n## 📦 Changelog · 26\/10 a 02\/11\n\*\*2 entrega\(s\)\*\* em produção: 🚀 Feature \(1\) · 🐛 Bug \(1\)$/);
+    assert.match(m.content!, /^@everyone\n## 📦 Changelog · 26\/10 a 02\/11\n\*\*2 entrega\(s\)\*\* em produção: 🚀 Feature \(1\) · 🐛 Bug \(1\)\n\*\*Manutenção por módulo\*\* \(melhorias \+ bugs\): 🏠 Home \(1\)$/);
     assert.deepEqual(m.embeds.map((e) => e.data.title), ['🚀 Feature · 1', '🐛 Bug · 1']);
     assert.equal(m.embeds[0]!.data.description, '**Report**\n• [Filtro salvo](https://app/c/Filtro salvo)');
   });
@@ -82,6 +84,33 @@ describe('mensagem', () => {
     const links = msgs.flatMap((m) => m.embeds).map((e) => e.data.description!.match(/^• /gm)?.length ?? 0).reduce((a, b) => a + b, 0);
     assert.equal(links, 400, 'nenhum card perdido na divisão');
     assert.equal(msgs.filter((m) => m.content?.includes('@everyone')).length, 1, '@everyone só na primeira');
+  });
+
+  it('manutenção por módulo: só melhorias + bugs, do maior para o menor, "sem módulo" por último', () => {
+    const groups = groupChangelog(
+      [
+        item('a', 'Bug', 'Chat'),
+        item('b', 'Melhoria', 'Board/Kanban'),
+        item('c', 'Bug', 'Board/Kanban'),
+        item('d', 'Feature', 'Chat'),
+        item('e', 'Feature', 'Chat'),
+        item('f', 'Bug', 'Sem módulo'),
+        item('g', 'Bug', 'Sem módulo'),
+        item('h', 'Melhoria', 'Dashboard'),
+      ],
+      TYPES,
+      [...MODULES, 'Chat', 'Dashboard'],
+    );
+    assert.deepEqual(maintenanceByModule(groups), [
+      { module: 'Board/Kanban', count: 2 },
+      { module: 'Chat', count: 1 },
+      { module: 'Dashboard', count: 1 },
+      { module: 'Sem módulo', count: 2 },
+    ]);
+    const [m] = renderChangelog(groups, from, to, false);
+    assert.ok(m!.content!.endsWith('📋 Board/Kanban (2) · 💬 Chat (1) · 📈 Dashboard (1) · 🧩 Sem módulo (2)'));
+    assert.equal(moduleEmoji('Partner Portal'), '🤝');
+    assert.equal(moduleEmoji('Portal'), '🌐');
   });
 
   it('período vazio', () => {
